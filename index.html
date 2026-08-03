@@ -50,6 +50,11 @@
   #status { font-size: 11px; color: #7f93a9; margin-top: 5px; letter-spacing: .03em; }
   #credit { position: absolute; right: 18px; bottom: 14px; font-size: 10px; color: #63748a; z-index: 10; }
   #credit a { color: #7f97b5; text-decoration: none; pointer-events: auto; }
+  #meminfo {
+    position: absolute; right: 18px; bottom: 30px; z-index: 10;
+    font-size: 9px; color: #4e5f72; letter-spacing: .05em;
+    font-variant-numeric: tabular-nums; pointer-events: none;
+  }
 
   #progress { position: absolute; left: 0; bottom: 0; height: 2px; background: linear-gradient(90deg, #3d8bfd, #6fd3ff); width: 0%; z-index: 11; }
 
@@ -95,12 +100,13 @@
   }
   #loading .bar .fill {
     height: 100%; width: 0%;
-    background: linear-gradient(90deg, #3d8bfd, #6fd3ff);
+    background: linear-gradient(90deg, #ffc400, #ffe066);
+    box-shadow: 0 0 8px rgba(255, 200, 0, .55);
     transition: width .35s ease;
   }
   /* ロード完了後は日時以外のUIを自動非表示 (タップで一時表示) */
-  #hud, #status, #credit, #progress { transition: opacity .3s ease; }
-  body.hideui #hud, body.hideui #status, body.hideui #credit, body.hideui #progress {
+  #hud, #status, #credit, #progress, #meminfo { transition: opacity .3s ease; }
+  body.hideui #hud, body.hideui #status, body.hideui #credit, body.hideui #progress, body.hideui #meminfo {
     opacity: 0; pointer-events: none;
   }
   #paused {
@@ -162,6 +168,7 @@
   <div id="frametime">--:--<span class="utc"></span></div>
   <div id="status">初期化中…</div>
 </div>
+<div id="meminfo"></div>
 <div id="credit">画像: <a href="https://view.eumetsat.int/" target="_blank" rel="noopener">© EUMETSAT</a></div>
 <div id="progress"></div>
 
@@ -187,9 +194,10 @@ const WMS_BASE   = "https://view.eumetsat.int/geoserver/wms";
 const SATS = {
   mtg: {
     label: "MTG (0°) — ヨーロッパ・アフリカ", ns: "mtg_fd", lon: 0, step: 10 * 60 * 1000,
+    flowScale: 1.0,   // 補間パラメータの倍率 (撮影間隔に比例した雲の移動量に合わせる)
     layers: {
       truecolour: { id: "mtg_fd:rgb_truecolour", label: "自然色 (True Colour)",
-                    tech: "METEOSAT MTG-I1 · FCI · TRUE COLOUR RGB (VIS 0.44 / 0.51 / 0.64 µm)" },
+                    tech: "METEOSAT MTG-I1 · FCI · TRUE COLOUR RGB (VIS 0.44 / 0.51 / 0.64 µm)", tw: true },
       geocolour:  { id: "mtg_fd:rgb_geocolour",  label: "ジオカラー (夜も見える)",
                     tech: "METEOSAT MTG-I1 · FCI · GEOCOLOUR (DAY: TRUE COLOUR / NIGHT: IR BLEND)" },
       ir105:      { id: "mtg_fd:ir105_hrfi",     label: "赤外 IR10.5",
@@ -199,11 +207,12 @@ const SATS = {
   },
   iodc: {
     label: "MSG IODC (41.5°E) — トルコ・中東・インド洋", ns: "msg_iodc", lon: 41.5, step: 15 * 60 * 1000,
+    flowScale: 1.6,   // 15分間隔で移動量が大きい → 追跡上限と許容度を広げる
     layers: {
       naturalenh: { id: "msg_iodc:rgb_naturalenhncd", label: "自然色 強調 (Natural)",
-                    tech: "METEOSAT MSG (IODC 41.5°E) · SEVIRI · NATURAL COLOUR RGB ENHANCED (NIR 1.6 / VIS 0.8 / VIS 0.6 µm)" },
+                    tech: "METEOSAT MSG (IODC 41.5°E) · SEVIRI · NATURAL COLOUR RGB ENHANCED (NIR 1.6 / VIS 0.8 / VIS 0.6 µm)", tw: true },
       natural:    { id: "msg_iodc:rgb_natural",       label: "自然色 (Natural)",
-                    tech: "METEOSAT MSG (IODC 41.5°E) · SEVIRI · NATURAL COLOUR RGB (NIR 1.6 / VIS 0.8 / VIS 0.6 µm)" },
+                    tech: "METEOSAT MSG (IODC 41.5°E) · SEVIRI · NATURAL COLOUR RGB (NIR 1.6 / VIS 0.8 / VIS 0.6 µm)", tw: true },
       ir108:      { id: "msg_iodc:ir108",             label: "赤外 IR10.8",
                     tech: "METEOSAT MSG (IODC 41.5°E) · SEVIRI · THERMAL IR 10.8 µm" },
     },
@@ -246,6 +255,7 @@ const elLoading  = document.getElementById("loading");
 const elLoadTech  = document.getElementById("loadTech");
 const elLoadCount = document.getElementById("loadCount");
 const elLoadFill  = document.getElementById("loadFill");
+const elMemInfo   = document.getElementById("meminfo");
 
 // ---------------- 状態 ----------------
 let SESSION = 0;
@@ -283,6 +293,7 @@ let playTotal = 0;              // 現在のループ全長 (tickで更新、シ
 let ptr = null;                 // ポインタ追跡 {id, x0, t0, pos0}
 let initialLoadDone = false;    // 初回ロード完了 (ローディング表示の消灯後は再表示しない)
 let loadStartAt = 0;            // 初回ロード開始時刻
+const sizeVerified = new Set(); // サーバーが受理した画像サイズ (再確認を省略して切替を高速化)
 
 // ロード停滞時に再生モードへ移行する条件
 const STALL_MS        = 10 * 1000;      // 新規フレームがこの時間取得できなければ「停滞」
@@ -340,11 +351,11 @@ function fmtAgo(ms) {
   return `${Math.floor(m / 60)}時間${m % 60}分前`;
 }
 
-function wmsUrl(t, size) {
-  const c = sat().lon;
+function wmsUrlFor(satKey, layer, t, size) {
+  const c = SATS[satKey].lon;
   const p = new URLSearchParams({
     service: "WMS", version: "1.1.1", request: "GetMap",
-    layers: layerId(), styles: "",
+    layers: layer, styles: "",
     srs: "EPSG:4326",
     bbox: `${c - BBOX_DEG},${-BBOX_DEG},${c + BBOX_DEG},${BBOX_DEG}`,
     width: String(size), height: String(size),
@@ -353,6 +364,7 @@ function wmsUrl(t, size) {
   });
   return `${WMS_BASE}?${p.toString()}`;
 }
+const wmsUrl = (t, size) => wmsUrlFor(satSel.value, layerId(), t, size);
 const capsUrl = () =>
   `${WMS_BASE}?service=WMS&version=1.3.0&request=GetCapabilities&namespace=${sat().ns}&_=${Date.now()}`;
 
@@ -453,6 +465,15 @@ function pump(session) {
 async function loadFrame(f, session) {
   const url = wmsUrl(f.t, activeSize);
   let failKind = "transient";
+  // 先読みキャッシュにあれば即座に使う (衛星切り替えを高速化)
+  const cached = useGL ? urlCache.get(url) : null;
+  if (cached) {
+    if (session !== SESSION) return;
+    f.blob = cached; f.img = null; f.ok = true;
+    f.tries = 0; f.kind = null; f.absentTries = 0;
+    lastNewFrameAt = Date.now();
+    return;
+  }
   try {
     if (useGL) {
       let res;
@@ -516,20 +537,88 @@ function retrySweep() {
 
 const readyFrames = () => frames.filter((f) => f.ok === true);
 
+// =========================================================================
+//  非アクティブ衛星のバックグラウンド先読み
+//  アクティブ側のロード完了後、もう一方の衛星の直近24時間ぶんを低優先度で
+//  取得してキャッシュしておき、衛星切り替えを即座に完了させる。
+// =========================================================================
+const urlCache = new Map();       // url -> Blob
+let prefetching = false;
+const PREFETCH_TICK_MS = 20000;
+
+function probeUrl(url) {
+  return new Promise((resolve) => {
+    const im = new Image();
+    im.onload = () => resolve(true);
+    im.onerror = () => resolve(false);
+    im.src = url + `&_=${Date.now()}`;
+    setTimeout(() => resolve(false), 20000);
+  });
+}
+
+async function prefetchOtherSat() {
+  // アクティブ側のロードが落ち着いているときだけ動く
+  if (!corsOk || !useGL || !initialLoadDone || prefetching) return;
+  if (inFlight > 0 || queue.length > 0) return;
+  prefetching = true;
+  const session = SESSION;
+  const activeKey = satSel.value;
+  try {
+    const otherKey = activeKey === "mtg" ? "iodc" : "mtg";
+    const S = SATS[otherKey];
+    const layer = S.layers[S.defaultLayer].id;
+    const size = activeSize;
+    // 最新スロットを探す
+    let latest = null;
+    let t = Math.floor((Date.now() - MIN_LAG_MS) / S.step) * S.step;
+    for (let i = 0; i < PROBE_BACK; i++, t -= S.step) {
+      if (session !== SESSION) return;
+      if (await probeUrl(wmsUrlFor(otherKey, layer, t, 128))) { latest = t; break; }
+    }
+    if (latest === null || session !== SESSION) return;
+    // 直近24時間ぶんのURL一覧 (新しい順)
+    const n = Math.round(WINDOW_MS / S.step) + 1;
+    const wanted = new Set();
+    for (let i = 0; i < n; i++) wanted.add(wmsUrlFor(otherKey, layer, latest - i * S.step, size));
+    // 窓から外れた/条件の変わった古いキャッシュを破棄 (メモリ節約)
+    for (const k of urlCache.keys()) if (!wanted.has(k)) urlCache.delete(k);
+    // 未取得分を並列2で取得
+    const urls = [...wanted].filter((u) => !urlCache.has(u));
+    let idx = 0;
+    const worker = async () => {
+      while (idx < urls.length) {
+        if (session !== SESSION) return;   // 設定変更・衛星切替で中断
+        const u = urls[idx++];
+        try {
+          const res = await fetch(u, { signal: AbortSignal.timeout(60000) });
+          const ct = res.headers.get("content-type") || "";
+          if (res.ok && ct.startsWith("image")) urlCache.set(u, await res.blob());
+        } catch (e) { /* 先読みは失敗しても無害 */ }
+      }
+    };
+    await Promise.all([worker(), worker()]);
+  } finally {
+    prefetching = false;
+  }
+}
+setInterval(prefetchOtherSat, PREFETCH_TICK_MS);
+
 // ---------------- 新着チェック & 24時間窓のスライド ----------------
 async function refreshLatest(session) {
   try {
     let newest = null;
+    const cap = floorSlot(Date.now() - MIN_LAG_MS);
     if (corsOk) {
-      newest = await latestFromCaps(session);
-      const cap = floorSlot(Date.now() - MIN_LAG_MS);
-      let probe = newest + stepMs();
-      while (probe <= cap && (await probeImage(probe, session))) { newest = probe; probe += stepMs(); }
-    } else {
-      const cap = floorSlot(Date.now() - MIN_LAG_MS);
+      // capsが一時的に失敗しても画像プローブへフォールバック (簡易モードに落とさない)
+      try { newest = await latestFromCaps(session); } catch (e) { newest = null; }
+    }
+    if (newest === null) {
       for (let t = cap; t > latestT; t -= stepMs()) {
         if (await probeImage(t, session)) { newest = t; break; }
       }
+    } else {
+      let probe = newest + stepMs();
+      while (probe <= cap && (await probeImage(probe, session))) { newest = probe; probe += stepMs(); }
     }
     if (session !== SESSION || newest === null || newest <= latestT) return;
     for (let t = latestT + stepMs(); t <= newest; t += stepMs()) {
@@ -616,6 +705,7 @@ uniform sampler2D uPrev;
 uniform float uLod;        // グレースケールピラミッドのLOD
 uniform vec2  uFlowTexel;  // フローテクスチャの1px (uv)
 uniform float uFirst;      // 1.0なら初期化 (フロー0から)
+uniform float uMaxFlow;    // フロー上限 (衛星の撮影間隔に応じて可変)
 out vec4 oFlow;
 void main() {
   vec2 f = vec2(0.0);
@@ -640,8 +730,8 @@ void main() {
   vec2 fpix = f / lodTexel;
   fpix -= It * g / (0.02 + dot(g, g));
   f = fpix * lodTexel;
-  // 発散防止: 実際の雲の10-15分移動量に合わせた控えめな上限 (±2% uv ≒ 10px @512)
-  f = clamp(f, vec2(-0.02), vec2(0.02));
+  // 発散防止: 実際の雲の移動量に合わせた上限 (MTG:±10px, IODC:±16px @512)
+  f = clamp(f, vec2(-uMaxFlow), vec2(uMaxFlow));
   oFlow = vec4(f, 0.0, 1.0);
 }`;
 
@@ -653,6 +743,7 @@ uniform sampler2D uPrev;    // フロー
 uniform sampler2D uGrayA;   // 元の輝度 (暗部判定用)
 uniform sampler2D uGrayB;
 uniform vec2 uFlowTexel;
+uniform float uGate;        // 照明変化ゲートの許容度 (フレーム間隔が長い衛星ほど緩く)
 out vec4 oFlow;
 void main() {
   vec2 t = uFlowTexel;
@@ -675,7 +766,7 @@ void main() {
   // 説明できない変化 (昼夜境界・太陽反射・雲の生成消滅) はフローを殺してフェードに任せる
   float ca = textureLod(uGrayA, vUv, 3.5).r;
   float cb = textureLod(uGrayB, vUv + f, 3.5).r;
-  f *= 1.0 - smoothstep(0.08, 0.22, abs(ca - cb));
+  f *= 1.0 - smoothstep(0.08 * uGate, 0.22 * uGate, abs(ca - cb));
   oFlow = vec4(f, 0.0, 1.0);
 }`;
 
@@ -690,6 +781,16 @@ uniform float uMix;
 uniform float uFlowOn;
 uniform float uFix;
 uniform float uPx;        // ディスク半径1.0に対する1画面ピクセル
+uniform float uConfRelax; // 信頼度判定の許容度 (フレーム間隔が長い衛星ほど緩く)
+// --- トワイライト再構成 (可視光レイヤーのみ) ---
+// 衛星画像は低太陽高度で急激に暗転する (製品のカットオフで崖ができる)。
+// フレーム時刻の太陽方向 uSunA/uSunB で「画像に写っている照明」を割り戻し、
+// 補間時刻の太陽方向 uSunI による連続的な照明で照らし直すことで、
+// 空間的にも時間的にも滑らかな昼→夜のグラデーションを合成する。
+uniform vec3  uSunA;
+uniform vec3  uSunB;
+uniform vec3  uSunI;
+uniform float uTw;
 out vec4 oCol;
 
 const float R = 6371.0;
@@ -710,11 +811,23 @@ vec3 iodcFix(vec3 c) {
             * (1.0 - clamp((lum - 0.55) * 4.0, 0.0, 1.0));
   vec3 vegCol = vec3(c.r * 1.04, c.g * 0.52, c.b * 0.72) * 0.62;
   c = mix(c, vegCol, veg * 0.9);
-  // 雲 (高輝度・低彩度) をさらに白く
+  // 水雲のピンク色かぶりを白へ (SEVIRI natural RGBはNIR1.6のRが強く水雲が桃色に写る)
+  // 彩度の高い暖色 (砂漠・大地) は除外して雲だけを対象にする
+  lum = dot(c, vec3(0.299, 0.587, 0.114));
+  {
+    float mx2 = max(c.r, max(c.g, c.b));
+    float mn2 = min(c.r, min(c.g, c.b));
+    float rEx = c.r - max(c.g, c.b);
+    float pinky = clamp(rEx * 9.0, 0.0, 1.0)
+                * clamp((lum - 0.40) * 4.0, 0.0, 1.0)
+                * (1.0 - clamp((mx2 - mn2 - 0.20) * 7.0, 0.0, 1.0));
+    c = mix(c, vec3(lum * 1.04), pinky * 0.95);
+  }
+  // 雲 (高輝度・低彩度): 輝度を少し下げてディティール (雲頂の凹凸・濃淡) を残す
   lum = dot(c, vec3(0.299, 0.587, 0.114));
   sat = max(c.r, max(c.g, c.b)) - min(c.r, min(c.g, c.b));
-  float cloud = clamp((lum - 0.38) * 2.6, 0.0, 1.0) * (1.0 - clamp(sat * 2.8, 0.0, 1.0));
-  c = mix(c, clamp(c * 1.30 + 0.05, 0.0, 1.0), cloud * 0.9);
+  float cloud = clamp((lum - 0.45) * 2.5, 0.0, 1.0) * (1.0 - clamp(sat * 2.8, 0.0, 1.0));
+  c = mix(c, c * 0.86, cloud);
   return clamp(c, 0.0, 1.0);
 }
 
@@ -737,16 +850,28 @@ vec3 sampleBlend(vec2 uv) {
   // 不一致 (明暗の変化・オクルージョン・誤推定) はクロスフェードへ滑らかに退避。
   // 完全に信頼できる場合でも1割はフェードを混ぜ、残留アーティファクトを抑える。
   float err = length(colAw - colBw);
-  float conf = (1.0 - smoothstep(0.04, 0.15, err)) * 0.9;
+  float conf = (1.0 - smoothstep(0.04 * uConfRelax, 0.15 * uConfRelax, err)) * 0.9;
   return mix(faded, warped, conf);
 }
 
 // 全体の色調整: 彩度と青みを強め、コントラストを上げる (ひまわり風の深く鮮やかな海)
 vec3 grade(vec3 c) {
   float lum = dot(c, vec3(0.299, 0.587, 0.114));
-  c = mix(vec3(lum), c, 1.35);            // 彩度アップ (無彩色の雲は白いまま)
-  c *= vec3(0.92, 1.00, 1.18);            // ホワイトバランスを寒色側へ
-  c = (c - 0.5) * 1.20 + 0.5;             // コントラスト
+  c = mix(vec3(lum), c, 1.18);            // 彩度アップ 控えめ (無彩色の雲は白いまま)
+  // 色調 (R±0 / G-10% / B+20%): ただし明るい無彩色 (雲) はティントから保護する。
+  // 保護しないと最明部でBのみクリップし (R1.0, G0.9, B1.0) のピンクになってしまう。
+  {
+    vec3 tinted = c * vec3(1.00, 0.90, 1.20);
+    float mxT = max(c.r, max(c.g, c.b));
+    float mnT = min(c.r, min(c.g, c.b));
+    float protectW = clamp((dot(c, vec3(0.299, 0.587, 0.114)) - 0.45) * 4.0, 0.0, 1.0)
+                   * (1.0 - clamp((mxT - mnT) * 3.0, 0.0, 1.0));
+    c = mix(tinted, c, protectW);
+  }
+  // コントラスト: 暗部では弱める (昼夜境界の立ち下がりを急峻にしないため)
+  float l2 = dot(c, vec3(0.299, 0.587, 0.114));
+  float k = mix(1.06, 1.20, smoothstep(0.04, 0.30, l2));
+  c = (c - 0.5) * k + 0.5;
   // 海 (青が支配的な領域) を明るく鮮やかなロイヤルブルーに (ひまわり真色合成の見え方を参考)
   float ocean = clamp((c.b - max(c.r, c.g)) * 3.0, 0.0, 1.0);
   vec3 sea = vec3(c.r * 0.55 + 0.02, c.g * 1.30 + 0.06, min(c.b * 1.90 + 0.06, 1.0));
@@ -773,6 +898,20 @@ void main() {
   vec2 uv = vec2((lon + BB) / (2.0 * BB), (BB - lat) / (2.0 * BB));
 
   vec3 col = sampleBlend(uv);
+
+  if (uTw > 0.5) {
+    vec3 un = P / R;   // 地表単位ベクトル (太陽高度: sinE = dot(un, sunDir))
+    float illA = pow(clamp(dot(un, uSunA), 0.0, 1.0), 0.7);
+    float illB = pow(clamp(dot(un, uSunB), 0.0, 1.0), 0.7);
+    float illS = mix(illA, illB, uMix);        // 元画像に写っている (段階的な) 照明
+    float sinE = dot(un, uSunI);               // いまの補間時刻の連続的な太陽高度
+    // 照明の割り戻し (最大3.5倍まで) → 連続照明で再点灯。
+    // smoothstep窓は太陽高度 約1°〜13° にかけて0→1: 製品のカットオフの崖を
+    // 完全に窓の外 (=黒) に置き、境界のグラデーションをこちら側で作る。
+    float illT = pow(clamp(sinE, 0.0, 1.0), 0.7) * smoothstep(0.02, 0.30, sinE);
+    col = col * min(1.0 / max(illS, 0.02), 3.5) * illT;
+  }
+
   if (uFix > 0.5) col = iodcFix(col);
   col = grade(col);
 
@@ -809,6 +948,9 @@ function mkTex(w, h, internal, filter, levels) {
 }
 
 function initGL() {
+  // 再実行可能にするため、GLリソース参照をリセット
+  flowPing = []; flowFBO = []; texPool = [];
+  canFlow = false; flowTexKey = ""; flowResult = null;
   gl = canvas.getContext("webgl2", { antialias: true, alpha: false });
   if (!gl) return "none";
   try {
@@ -827,10 +969,10 @@ function initGL() {
     gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
 
     const uni = (p, names) => { const o = {}; for (const n of names) o[n] = gl.getUniformLocation(p, n); return o; };
-    locGlobe = uni(progGlobe, ["uScale","uTexA","uTexB","uFlow","uMix","uFlowOn","uFix","uPx","uView"]);
+    locGlobe = uni(progGlobe, ["uScale","uTexA","uTexB","uFlow","uMix","uFlowOn","uFix","uPx","uView","uConfRelax","uSunA","uSunB","uSunI","uTw"]);
     locGray  = uni(progGray,  ["uSrc"]);
-    locFlow  = uni(progFlow,  ["uGrayA","uGrayB","uPrev","uLod","uFlowTexel","uFirst"]);
-    locFlowPost = uni(progFlowPost, ["uPrev","uGrayA","uGrayB","uFlowTexel"]);
+    locFlow  = uni(progFlow,  ["uGrayA","uGrayB","uPrev","uLod","uFlowTexel","uFirst","uMaxFlow"]);
+    locFlowPost = uni(progFlowPost, ["uPrev","uGrayA","uGrayB","uFlowTexel","uGate"]);
     locHP = uni(progHP, ["uGray"]);
 
     // フロー用リソース (floatレンダリング対応をチェック)
@@ -864,6 +1006,7 @@ function initGL() {
     gl = null;
     return "fail";
   }
+  attachContextLossHandlers();
   return "ok";
 }
 
@@ -927,6 +1070,7 @@ function computeFlow(texA, texB, key) {
   gl.uniform1i(locFlow.uGrayB, 1);
   gl.uniform1i(locFlow.uPrev, 2);
   gl.uniform2f(locFlow.uFlowTexel, 1 / FLOW_SIZE, 1 / FLOW_SIZE);
+  gl.uniform1f(locFlow.uMaxFlow, 0.02 * (sat().flowScale || 1));
   gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, hpTexA);
   gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, hpTexB);
   gl.viewport(0, 0, FLOW_SIZE, FLOW_SIZE);
@@ -948,6 +1092,7 @@ function computeFlow(texA, texB, key) {
   gl.uniform1i(locFlowPost.uGrayA, 0);
   gl.uniform1i(locFlowPost.uGrayB, 1);
   gl.uniform2f(locFlowPost.uFlowTexel, 1 / FLOW_SIZE, 1 / FLOW_SIZE);
+  gl.uniform1f(locFlowPost.uGate, sat().flowScale || 1);
   gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, grayTexA);
   gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, grayTexB);
   for (let i = 0; i < 4; i++) {
@@ -999,6 +1144,21 @@ function resize() {
 }
 window.addEventListener("resize", resize);
 
+// フレーム時刻の太陽方向ベクトル (シェーダ座標系: X=東, Y=北, Z=衛星直下点方向)
+function sunDirAt(tMs) {
+  const d = new Date(tMs);
+  const yearStart = Date.UTC(d.getUTCFullYear(), 0, 0);
+  const N = (tMs - yearStart) / 86400000;                      // 通日
+  const B = 2 * Math.PI * (N - 81) / 364;
+  const eotMin = 9.87 * Math.sin(2 * B) - 7.53 * Math.cos(B) - 1.5 * Math.sin(B); // 均時差 (分)
+  const decl = -23.44 * Math.PI / 180 * Math.cos(2 * Math.PI * (N + 10) / 365);   // 赤緯
+  const utcH = d.getUTCHours() + d.getUTCMinutes() / 60 + d.getUTCSeconds() / 3600;
+  const lonS = (12 - utcH - eotMin / 60) * 15;                 // 太陽直下点経度 (deg)
+  const dl = (lonS - sat().lon) * Math.PI / 180;
+  return [Math.cos(decl) * Math.sin(dl), Math.sin(decl), Math.cos(decl) * Math.cos(dl)];
+}
+const layerTw = () => !!(sat().layers[layerSel.value] || sat().layers[sat().defaultLayer]).tw;
+
 let ctx2d = null;
 function draw(fa, fb, mixv, isGap, view) {
   view = view || curView;
@@ -1029,6 +1189,17 @@ function draw(fa, fb, mixv, isGap, view) {
     gl.uniform1f(locGlobe.uMix, mixv);
     gl.uniform1f(locGlobe.uFlowOn, motion && flowResult ? 1 : 0);
     gl.uniform1f(locGlobe.uFix, colorFixActive() ? 1 : 0);
+    gl.uniform1f(locGlobe.uConfRelax, sat().flowScale || 1);
+    // トワイライト再構成用の太陽方向 (フレームA/B時刻 + 補間時刻)
+    const tw = layerTw();
+    gl.uniform1f(locGlobe.uTw, tw ? 1 : 0);
+    if (tw) {
+      const sA = sunDirAt(fa.t), sB = sunDirAt(fb.t);
+      const sI = sunDirAt(fa.t + (fb.t - fa.t) * mixv);
+      gl.uniform3f(locGlobe.uSunA, sA[0], sA[1], sA[2]);
+      gl.uniform3f(locGlobe.uSunB, sB[0], sB[1], sB[2]);
+      gl.uniform3f(locGlobe.uSunI, sI[0], sI[1], sI[2]);
+    }
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     pruneBitmaps(fa.t);
     return true;
@@ -1065,11 +1236,11 @@ function replaceCanvas() {
   bindCanvas();
 }
 
-let modeDecided = false;
 function decideRenderMode() {
-  if (modeDecided) return;
-  modeDecided = true;
+  if (useGL && gl) return; // 球体表示で動作中はそのまま
   if (corsOk) {
+    // 2D表示に使っていたcanvasはWebGLを取得できないため作り直す
+    if (ctx2d) { replaceCanvas(); ctx2d = null; }
     const r = initGL();
     if (r === "ok") { useGL = true; }
     else { useGL = false; if (r === "fail") replaceCanvas(); }
@@ -1077,6 +1248,25 @@ function decideRenderMode() {
     useGL = false;
   }
   resize();
+}
+
+// WebGLコンテキスト喪失 (GPUリセット等) からの自動復旧
+function attachContextLossHandlers() {
+  canvas.addEventListener("webglcontextlost", (e) => { e.preventDefault(); }, false);
+  canvas.addEventListener("webglcontextrestored", () => {
+    gl = null;
+    const r = initGL();
+    if (r === "ok") {
+      useGL = true;
+      flowTexKey = ""; flowResult = null;
+      resize();
+    } else {
+      // 復旧できない場合は2D表示に退避 (四角表示ではなくリロードで球体復帰も可)
+      useGL = false;
+      replaceCanvas();
+      resize();
+    }
+  }, false);
 }
 
 // ---------------- 再生ループ ----------------
@@ -1166,6 +1356,8 @@ function updateStatus() {
   if (!initialLoadDone && frames.length > 0) {
     const pendingFirstTry = frames.some((f) => f.ok === null) || inFlight > 0 || queue.length > 0;
     if (ready >= expected || !pendingFirstTry) initialLoadDone = true;
+    // ロード枚数が120枚 (全体がそれ未満の衛星では全枚数) を超えたら再生モードへ
+    if (ready >= Math.min(120, expected)) initialLoadDone = true;
     // 停滞判定: 最新側 (現在から約30分前まで) の画像が揃っている状態でロードが
     // 一定時間進まなくなったら、残りはバックグラウンド取得に回して再生モードに入る
     if (!initialLoadDone && ready >= 2 && lastNewFrameAt > 0) {
@@ -1187,6 +1379,7 @@ function updateStatus() {
     elLoading.classList.remove("visible");
   }
   applyUiAutoHide();
+  updateMemInfo();
   if (ready >= 2) overlay.classList.add("hidden");
   else if (ready === 0 && failed >= frames.length && frames.length > 0) {
     showError("画像を取得できませんでした。",
@@ -1194,6 +1387,23 @@ function updateStatus() {
       true);
   }
 }
+// 使用メモリの目安 (画像データ + デコード済みビットマップ + GPUテクスチャ + 先読みキャッシュ)
+function updateMemInfo() {
+  let imgBytes = 0;
+  for (const f of frames) if (f.blob) imgBytes += f.blob.size;
+  let cacheBytes = 0;
+  for (const b of urlCache.values()) cacheBytes += b.size;
+  let decBytes = 0;
+  for (const [, e] of bmCache) if (e.bm) decBytes += e.bm.width * e.bm.height * 4;
+  const texBytes = texPool.filter((s) => s.tex).length * activeSize * activeSize * 3;
+  const totalMB = (imgBytes + cacheBytes + decBytes + texBytes) / 1048576;
+  const heap = (performance.memory && performance.memory.usedJSHeapSize)
+    ? ` · JS ${Math.round(performance.memory.usedJSHeapSize / 1048576)} MB` : "";
+  elMemInfo.textContent = totalMB > 0.5
+    ? `MEM ≈ ${Math.round(totalMB)} MB (画像 ${Math.round((imgBytes + cacheBytes) / 1048576)} · デコード ${Math.round(decBytes / 1048576)} · GPU ${Math.round(texBytes / 1048576)}${heap})`
+    : "";
+}
+
 function showError(msg, msg2, keepSpinner) {
   overlay.classList.remove("hidden");
   overlay.querySelector(".spinner").style.display = keepSpinner ? "" : "none";
@@ -1218,7 +1428,10 @@ async function start() {
   lastShownT = null; lastCutAt = 0;
   scrubbing = false; ptr = null;
   initialLoadDone = false;
-  elLoading.classList.add("visible"); elLoadCount.textContent = "";
+  // 前の衛星のフレームをすぐに破棄する。残したままだと5秒間隔のupdateStatusが
+  // 旧データの枚数で「ロード完了」と誤判定し、切替時のローディング表示が出ない。
+  frames = []; latestT = 0;
+  elLoading.classList.add("visible"); elLoadCount.textContent = ""; elLoadFill.style.width = "0%";
   flowTexKey = ""; flowResult = null;
   for (const s of texPool) s.key = 0;
   for (const [, e] of bmCache) if (e.bm) e.bm.close();
@@ -1247,6 +1460,17 @@ async function start() {
     } else {
       ovMsg.textContent = "SEARCHING FOR LATEST IMAGERY…";
       latest = await latestByProbe(session);
+      // capsの取得は失敗したが、画像そのものがCORS対応なら球体表示 (WebGL) は可能。
+      // ここを確認しないと、一時的なcaps失敗だけで平面表示 (四角い地球) に固定されてしまう。
+      corsOk = await new Promise((resolve) => {
+        const im = new Image();
+        im.crossOrigin = "anonymous";
+        im.onload = () => resolve(true);
+        im.onerror = () => resolve(false);
+        im.src = wmsUrl(latest, 128) + `&_=${Date.now()}`;
+        setTimeout(() => resolve(false), 15000);
+      });
+      if (session !== SESSION) return;
     }
   } catch (e) {
     if (session !== SESSION) return;
@@ -1259,10 +1483,16 @@ async function start() {
 
   decideRenderMode();
 
-  // 希望画質をサーバーが受けるか確認 (だめなら自動で下げる)
-  ovMsg.textContent = "CHECKING IMAGE QUALITY…";
-  try { activeSize = await pickWorkingSize(latest, session); }
-  catch (e) { if (session !== SESSION) return; activeSize = 1024; }
+  // 希望画質をサーバーが受けるか確認 (だめなら自動で下げる)。一度確認したサイズは再確認しない
+  if (sizeVerified.has(imgSize())) {
+    activeSize = imgSize();
+  } else {
+    ovMsg.textContent = "CHECKING IMAGE QUALITY…";
+    try {
+      activeSize = await pickWorkingSize(latest, session);
+      if (activeSize === imgSize()) sizeVerified.add(activeSize);
+    } catch (e) { if (session !== SESSION) return; activeSize = 1024; }
+  }
   if (session !== SESSION) return;
 
   ovMsg.textContent = "LOADING SATELLITE IMAGERY…";
