@@ -89,6 +89,20 @@
     color: rgba(165, 185, 205, .85); font-variant-numeric: tabular-nums;
     text-shadow: 0 1px 8px rgba(0,0,0,.95);
   }
+  #loading .bar {
+    width: min(340px, 62vw); height: 3px; border-radius: 2px; overflow: hidden;
+    background: rgba(120, 150, 190, .22); margin-top: 2px;
+  }
+  #loading .bar .fill {
+    height: 100%; width: 0%;
+    background: linear-gradient(90deg, #3d8bfd, #6fd3ff);
+    transition: width .35s ease;
+  }
+  /* ロード完了後は日時以外のUIを自動非表示 (タップで一時表示) */
+  #hud, #status, #credit, #progress { transition: opacity .3s ease; }
+  body.hideui #hud, body.hideui #status, body.hideui #credit, body.hideui #progress {
+    opacity: 0; pointer-events: none;
+  }
   #paused {
     position: absolute; inset: 0; z-index: 9; display: none;
     align-items: center; justify-content: center; pointer-events: none;
@@ -139,6 +153,7 @@
   <div class="t1">LOADING SATELLITE IMAGERY</div>
   <div class="t2" id="loadTech"></div>
   <div class="t3" id="loadCount"></div>
+  <div class="bar"><div class="fill" id="loadFill"></div></div>
 </div>
 
 <div id="paused"><span>PAUSED</span></div>
@@ -230,6 +245,7 @@ const controls = document.getElementById("controls");
 const elLoading  = document.getElementById("loading");
 const elLoadTech  = document.getElementById("loadTech");
 const elLoadCount = document.getElementById("loadCount");
+const elLoadFill  = document.getElementById("loadFill");
 
 // ---------------- 状態 ----------------
 let SESSION = 0;
@@ -266,6 +282,11 @@ let scrubbing = false;          // スワイプでシーク中は自動再生を
 let playTotal = 0;              // 現在のループ全長 (tickで更新、シークの換算に使用)
 let ptr = null;                 // ポインタ追跡 {id, x0, t0, pos0}
 let initialLoadDone = false;    // 初回ロード完了 (ローディング表示の消灯後は再表示しない)
+let loadStartAt = 0;            // 初回ロード開始時刻
+
+// ロード停滞時に再生モードへ移行する条件
+const STALL_MS        = 10 * 1000;      // 新規フレームがこの時間取得できなければ「停滞」
+const NEAR_NOW_MS     = 45 * 60 * 1000; // 「最新側が揃った」とみなす閾値 (現在から約30分前+余裕)
 
 function cutSwitchView() {
   if (curView.z !== 1) { curView = { ...FULL_VIEW }; return; }
@@ -1145,16 +1166,27 @@ function updateStatus() {
   if (!initialLoadDone && frames.length > 0) {
     const pendingFirstTry = frames.some((f) => f.ok === null) || inFlight > 0 || queue.length > 0;
     if (ready >= expected || !pendingFirstTry) initialLoadDone = true;
+    // 停滞判定: 最新側 (現在から約30分前まで) の画像が揃っている状態でロードが
+    // 一定時間進まなくなったら、残りはバックグラウンド取得に回して再生モードに入る
+    if (!initialLoadDone && ready >= 2 && lastNewFrameAt > 0) {
+      const newestLoaded = readyFrames().at(-1).t;
+      const nearNow = Date.now() - newestLoaded < NEAR_NOW_MS;
+      const stalled = Date.now() - lastNewFrameAt > STALL_MS &&
+                      Date.now() - loadStartAt > STALL_MS * 1.5;
+      if (nearNow && stalled) initialLoadDone = true;
+    }
   }
   if (!initialLoadDone && frames.length > 0) {
     const lyr = sat().layers[layerSel.value] || sat().layers[sat().defaultLayer];
     elLoadTech.textContent =
       `${lyr.tech} · ${Math.round(stepMs() / 60000)}-MIN INTERVAL · ${activeSize} PX · LAST 24 HOURS`;
     elLoadCount.textContent = `${ready} / ${expected}`;
+    elLoadFill.style.width = `${Math.round((ready / Math.max(1, expected)) * 100)}%`;
     elLoading.classList.add("visible");
   } else {
     elLoading.classList.remove("visible");
   }
+  applyUiAutoHide();
   if (ready >= 2) overlay.classList.add("hidden");
   else if (ready === 0 && failed >= frames.length && frames.length > 0) {
     showError("画像を取得できませんでした。",
@@ -1235,6 +1267,8 @@ async function start() {
 
   ovMsg.textContent = "LOADING SATELLITE IMAGERY…";
   ovMsg2.textContent = `直近24時間 (${nFrames()}枚 / ${activeSize}px) を新しい順に取得します。再生は数枚そろい次第始まります。`;
+  loadStartAt = Date.now();
+  lastNewFrameAt = 0;
   buildTimeline(latest);
   enqueueAll(session);
   updateStatus();
@@ -1257,16 +1291,29 @@ function togglePlay() {
 }
 playBtn.addEventListener("click", togglePlay);
 
-// --- コントロールメニュー: タップしたときだけ表示 (5秒で自動的に隠れる) ---
-let controlsTimer = null;
-function showControls() {
+// --- UIの表示制御 ---
+// ロード完了後は日時 (と映像) 以外のすべての表示を隠し、タップしたときだけ5秒間表示する。
+// ロード中はHUD・ステータス等を表示したまま (コントロールメニューは常にタップ時のみ)。
+let uiTimer = null, uiVisible = false;
+function applyUiAutoHide() {
+  document.body.classList.toggle("hideui", initialLoadDone && !uiVisible);
+}
+function showUI() {
+  uiVisible = true;
   controls.classList.add("visible");
-  clearTimeout(controlsTimer);
-  controlsTimer = setTimeout(() => controls.classList.remove("visible"), 5000);
+  applyUiAutoHide();
+  clearTimeout(uiTimer);
+  uiTimer = setTimeout(hideUI, 5000);
+}
+function hideUI() {
+  uiVisible = false;
+  controls.classList.remove("visible");
+  clearTimeout(uiTimer);
+  applyUiAutoHide();
 }
 // メニュー操作中は隠れないように延長
-controls.addEventListener("pointerdown", showControls);
-controls.addEventListener("change", showControls);
+controls.addEventListener("pointerdown", showUI);
+controls.addEventListener("change", showUI);
 
 // --- タップ判定 & 左右スワイプで早送り/巻き戻し ---
 function bindCanvas() {
@@ -1290,13 +1337,9 @@ function bindCanvas() {
     scrubbing = false;
     ptr = null;
     if (wasTap) {
-      // タップ: コントロールメニューの表示/非表示を切り替え
-      if (controls.classList.contains("visible")) {
-        clearTimeout(controlsTimer);
-        controls.classList.remove("visible");
-      } else {
-        showControls();
-      }
+      // タップ: UI (メニュー・ステータス等) の表示/非表示を切り替え
+      if (uiVisible) hideUI();
+      else showUI();
     }
   };
   canvas.addEventListener("pointerup", endPtr);
@@ -1309,7 +1352,7 @@ document.addEventListener("keydown", (e) => {
 
 setInterval(() => { refreshLatest(SESSION); }, REFRESH_MS);
 setInterval(retrySweep, RETRY_SWEEP_MS);
-setInterval(updateStatus, 30000);
+setInterval(updateStatus, 5000); // 停滞判定・表示更新 (バックグラウンド取得は4分毎+自動再試行で継続)
 
 rebuildLayerOptions();
 resize();
