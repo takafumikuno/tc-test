@@ -11,7 +11,7 @@
     font-family: "Hiragino Kaku Gothic ProN", "Hiragino Sans", "Yu Gothic UI", "Noto Sans JP", sans-serif;
     color: #cfd8e3;
   }
-  #view { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: pointer; background: #000; }
+  #view { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: pointer; background: #000; touch-action: none; }
 
   #hud {
     position: absolute; top: 16px; left: 18px; z-index: 10;
@@ -24,7 +24,9 @@
     position: absolute; top: 14px; right: 16px; z-index: 10;
     display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end;
     max-width: 72vw;
+    opacity: 0; pointer-events: none; transition: opacity .25s ease;
   }
+  #controls.visible { opacity: 1; pointer-events: auto; }
   #controls select, #controls button, #controls label.chk {
     background: rgba(14, 20, 30, .78); color: #cfd8e3;
     border: 1px solid rgba(120, 150, 190, .35); border-radius: 7px;
@@ -66,6 +68,27 @@
   @keyframes spin { to { transform: rotate(360deg); } }
   #overlay .msg  { font-size: 14px; color: #b9c9da; letter-spacing: .05em; }
   #overlay .msg2 { font-size: 11px; color: #6d8199; max-width: 560px; line-height: 1.9; }
+  #loading {
+    position: absolute; inset: 0; z-index: 8;
+    display: flex; flex-direction: column; gap: 12px;
+    align-items: center; justify-content: center; pointer-events: none;
+    opacity: 0; transition: opacity .6s ease;
+  }
+  #loading.visible { opacity: 1; }
+  #loading .t1 {
+    font-size: 17px; font-weight: 300; letter-spacing: .38em; padding-left: .38em;
+    color: rgba(238, 245, 252, .95); text-shadow: 0 1px 10px rgba(0,0,0,.95);
+  }
+  #loading .t2 {
+    font-size: 11px; letter-spacing: .18em; padding-left: .18em;
+    color: rgba(150, 172, 196, .9); text-align: center; max-width: 86vw; line-height: 1.8;
+    text-shadow: 0 1px 8px rgba(0,0,0,.95);
+  }
+  #loading .t3 {
+    font-size: 12px; letter-spacing: .25em; padding-left: .25em;
+    color: rgba(165, 185, 205, .85); font-variant-numeric: tabular-nums;
+    text-shadow: 0 1px 8px rgba(0,0,0,.95);
+  }
   #paused {
     position: absolute; inset: 0; z-index: 9; display: none;
     align-items: center; justify-content: center; pointer-events: none;
@@ -108,7 +131,14 @@
     <option value="fade">補間: クロスフェード</option>
   </select>
   <label class="chk" title="IODCの不自然な緑を肉眼の見た目に近づけます"><input type="checkbox" id="fixChk" checked>色補正</label>
+  <button id="playBtn" title="再生/一時停止">⏸ 一時停止</button>
   <button id="fsBtn" title="全画面表示">⛶ 全画面</button>
+</div>
+
+<div id="loading">
+  <div class="t1">LOADING SATELLITE IMAGERY</div>
+  <div class="t2" id="loadTech"></div>
+  <div class="t3" id="loadCount"></div>
 </div>
 
 <div id="paused"><span>PAUSED</span></div>
@@ -122,7 +152,7 @@
 
 <div id="overlay">
   <div class="spinner"></div>
-  <div class="msg" id="ovMsg">EUMETSAT に接続しています…</div>
+  <div class="msg" id="ovMsg">CONNECTING TO EUMETSAT…</div>
   <div class="msg2" id="ovMsg2"></div>
 </div>
 
@@ -143,18 +173,24 @@ const SATS = {
   mtg: {
     label: "MTG (0°) — ヨーロッパ・アフリカ", ns: "mtg_fd", lon: 0, step: 10 * 60 * 1000,
     layers: {
-      truecolour: { id: "mtg_fd:rgb_truecolour", label: "自然色 (True Colour)" },
-      geocolour:  { id: "mtg_fd:rgb_geocolour",  label: "ジオカラー (夜も見える)" },
-      ir105:      { id: "mtg_fd:ir105_hrfi",     label: "赤外 IR10.5" },
+      truecolour: { id: "mtg_fd:rgb_truecolour", label: "自然色 (True Colour)",
+                    tech: "METEOSAT MTG-I1 · FCI · TRUE COLOUR RGB (VIS 0.44 / 0.51 / 0.64 µm)" },
+      geocolour:  { id: "mtg_fd:rgb_geocolour",  label: "ジオカラー (夜も見える)",
+                    tech: "METEOSAT MTG-I1 · FCI · GEOCOLOUR (DAY: TRUE COLOUR / NIGHT: IR BLEND)" },
+      ir105:      { id: "mtg_fd:ir105_hrfi",     label: "赤外 IR10.5",
+                    tech: "METEOSAT MTG-I1 · FCI HRFI · THERMAL IR 10.5 µm" },
     },
     defaultLayer: "truecolour",
   },
   iodc: {
     label: "MSG IODC (41.5°E) — トルコ・中東・インド洋", ns: "msg_iodc", lon: 41.5, step: 15 * 60 * 1000,
     layers: {
-      naturalenh: { id: "msg_iodc:rgb_naturalenhncd", label: "自然色 強調 (Natural)" },
-      natural:    { id: "msg_iodc:rgb_natural",       label: "自然色 (Natural)" },
-      ir108:      { id: "msg_iodc:ir108",             label: "赤外 IR10.8" },
+      naturalenh: { id: "msg_iodc:rgb_naturalenhncd", label: "自然色 強調 (Natural)",
+                    tech: "METEOSAT MSG (IODC 41.5°E) · SEVIRI · NATURAL COLOUR RGB ENHANCED (NIR 1.6 / VIS 0.8 / VIS 0.6 µm)" },
+      natural:    { id: "msg_iodc:rgb_natural",       label: "自然色 (Natural)",
+                    tech: "METEOSAT MSG (IODC 41.5°E) · SEVIRI · NATURAL COLOUR RGB (NIR 1.6 / VIS 0.8 / VIS 0.6 µm)" },
+      ir108:      { id: "msg_iodc:ir108",             label: "赤外 IR10.8",
+                    tech: "METEOSAT MSG (IODC 41.5°E) · SEVIRI · THERMAL IR 10.8 µm" },
     },
     defaultLayer: "naturalenh",
   },
@@ -187,8 +223,13 @@ const qualSel  = document.getElementById("qualitySel");
 const speedSel = document.getElementById("speedSel");
 const interpSel= document.getElementById("interpSel");
 const fixChk   = document.getElementById("fixChk");
+const playBtn  = document.getElementById("playBtn");
 const fsBtn    = document.getElementById("fsBtn");
 const hudsub   = document.getElementById("hudsub");
+const controls = document.getElementById("controls");
+const elLoading  = document.getElementById("loading");
+const elLoadTech  = document.getElementById("loadTech");
+const elLoadCount = document.getElementById("loadCount");
 
 // ---------------- 状態 ----------------
 let SESSION = 0;
@@ -219,6 +260,12 @@ let lastZoomIdx = -1;
 let lastShownT = null;          // 直前に表示していたフレーム時刻 (カット検出用)
 let lastCutAt = 0;              // 読み込み中の連続カット防止
 const MIN_CUT_INTERVAL = 2000;
+
+// --- スワイプシーク (早送り/巻き戻し) ---
+let scrubbing = false;          // スワイプでシーク中は自動再生を止める
+let playTotal = 0;              // 現在のループ全長 (tickで更新、シークの換算に使用)
+let ptr = null;                 // ポインタ追跡 {id, x0, t0, pos0}
+let initialLoadDone = false;    // 初回ロード完了 (ローディング表示の消灯後は再表示しない)
 
 function cutSwitchView() {
   if (curView.z !== 1) { curView = { ...FULL_VIEW }; return; }
@@ -673,10 +720,16 @@ vec3 sampleBlend(vec2 uv) {
   return mix(faded, warped, conf);
 }
 
-// 全体の色調整: 青みを強め、コントラストを上げる
+// 全体の色調整: 彩度と青みを強め、コントラストを上げる (ひまわり風の深く鮮やかな海)
 vec3 grade(vec3 c) {
-  c *= vec3(0.94, 1.00, 1.12);            // ホワイトバランスを寒色側へ
-  c = (c - 0.5) * 1.18 + 0.5;             // コントラスト
+  float lum = dot(c, vec3(0.299, 0.587, 0.114));
+  c = mix(vec3(lum), c, 1.35);            // 彩度アップ (無彩色の雲は白いまま)
+  c *= vec3(0.92, 1.00, 1.18);            // ホワイトバランスを寒色側へ
+  c = (c - 0.5) * 1.20 + 0.5;             // コントラスト
+  // 海 (青が支配的な領域) を明るく鮮やかなロイヤルブルーに (ひまわり真色合成の見え方を参考)
+  float ocean = clamp((c.b - max(c.r, c.g)) * 3.0, 0.0, 1.0);
+  vec3 sea = vec3(c.r * 0.55 + 0.02, c.g * 1.30 + 0.06, min(c.b * 1.90 + 0.06, 1.0));
+  c = mix(c, sea, ocean * 0.7);
   return clamp(c, 0.0, 1.0);
 }
 
@@ -1025,13 +1078,14 @@ function tick(now) {
     total += durs[i];
   }
   if (total <= 0) { durs.fill(P); total = durs.length * P; } // 全区間が欠落跨ぎの場合の保険
+  playTotal = total;
   let wrapped = false;
-  if (playing) {
+  if (playing && !scrubbing) {
     const prev = playPos;
     playPos = (playPos + dt) % total;
     if (playPos < prev - 1) wrapped = true; // ループ先頭へ戻った
   }
-  if (playPos >= total) playPos = 0;
+  if (playPos >= total) playPos = playPos % total;
 
   let acc = 0, k = durs.length - 1;
   for (let i = 0; i < durs.length; i++) {
@@ -1046,14 +1100,15 @@ function tick(now) {
   const shownTNow = isGap ? fb.t : (frac < 0.5 ? fa.t : fb.t);
 
   // カット検出: ラップ、または表示時刻が前方へ飛んだ (=欠落を跨いだ) 瞬間にビューを瞬時に切替
-  if (playing) {
+  // (スワイプシーク中のジャンプではカットしない)
+  if (playing && !scrubbing) {
     const jumped = lastShownT !== null && shownTNow - lastShownT > step * 1.5;
     if ((wrapped || jumped) && now - lastCutAt > MIN_CUT_INTERVAL) {
       cutSwitchView();
       lastCutAt = now;
     }
-    lastShownT = shownTNow;
   }
+  lastShownT = shownTNow;
 
   if (draw(fa, fb, mixv, isGap)) {
     const shownT = shownTNow;
@@ -1083,6 +1138,23 @@ function updateStatus() {
   else s += "　|　簡易表示モード";
   s += `　|　${(sat().layers[layerSel.value] || sat().layers[sat().defaultLayer]).label}`;
   elStatus.textContent = s;
+  // 初回ロード中のみ中央にローディング表示。
+  // 「全フレームが揃った」または「全フレームを一巡試行し終えた (残りはバックグラウンドで再試行)」
+  // 時点で消灯し、その後の定期更新や再試行では二度と再表示しない。
+  const expected = frames.length - absent;
+  if (!initialLoadDone && frames.length > 0) {
+    const pendingFirstTry = frames.some((f) => f.ok === null) || inFlight > 0 || queue.length > 0;
+    if (ready >= expected || !pendingFirstTry) initialLoadDone = true;
+  }
+  if (!initialLoadDone && frames.length > 0) {
+    const lyr = sat().layers[layerSel.value] || sat().layers[sat().defaultLayer];
+    elLoadTech.textContent =
+      `${lyr.tech} · ${Math.round(stepMs() / 60000)}-MIN INTERVAL · ${activeSize} PX · LAST 24 HOURS`;
+    elLoadCount.textContent = `${ready} / ${expected}`;
+    elLoading.classList.add("visible");
+  } else {
+    elLoading.classList.remove("visible");
+  }
   if (ready >= 2) overlay.classList.add("hidden");
   else if (ready === 0 && failed >= frames.length && frames.length > 0) {
     showError("画像を取得できませんでした。",
@@ -1112,6 +1184,9 @@ async function start() {
   playPos = 0; shownPairKey = "";
   curView = { ...FULL_VIEW }; lastZoomIdx = -1;
   lastShownT = null; lastCutAt = 0;
+  scrubbing = false; ptr = null;
+  initialLoadDone = false;
+  elLoading.classList.add("visible"); elLoadCount.textContent = "";
   flowTexKey = ""; flowResult = null;
   for (const s of texPool) s.key = 0;
   for (const [, e] of bmCache) if (e.bm) e.bm.close();
@@ -1119,7 +1194,7 @@ async function start() {
   queue.length = 0;
   overlay.classList.remove("hidden");
   overlay.querySelector(".spinner").style.display = "";
-  ovMsg.textContent = "EUMETSAT に接続しています…";
+  ovMsg.textContent = "CONNECTING TO EUMETSAT…";
   ovMsg2.textContent = "";
 
   let latest = null;
@@ -1138,7 +1213,7 @@ async function start() {
       let probe = latest + stepMs();
       while (probe <= cap && (await probeImage(probe, session))) { latest = probe; probe += stepMs(); }
     } else {
-      ovMsg.textContent = "最新画像を探しています… (簡易モード)";
+      ovMsg.textContent = "SEARCHING FOR LATEST IMAGERY…";
       latest = await latestByProbe(session);
     }
   } catch (e) {
@@ -1153,12 +1228,12 @@ async function start() {
   decideRenderMode();
 
   // 希望画質をサーバーが受けるか確認 (だめなら自動で下げる)
-  ovMsg.textContent = "画質を確認しています…";
+  ovMsg.textContent = "CHECKING IMAGE QUALITY…";
   try { activeSize = await pickWorkingSize(latest, session); }
   catch (e) { if (session !== SESSION) return; activeSize = 1024; }
   if (session !== SESSION) return;
 
-  ovMsg.textContent = "画像を読み込んでいます…";
+  ovMsg.textContent = "LOADING SATELLITE IMAGERY…";
   ovMsg2.textContent = `直近24時間 (${nFrames()}枚 / ${activeSize}px) を新しい順に取得します。再生は数枚そろい次第始まります。`;
   buildTimeline(latest);
   enqueueAll(session);
@@ -1178,8 +1253,55 @@ fsBtn.addEventListener("click", () => {
 function togglePlay() {
   playing = !playing;
   elPaused.style.display = playing ? "none" : "flex";
+  playBtn.textContent = playing ? "⏸ 一時停止" : "▶ 再生";
 }
-function bindCanvas() { canvas.addEventListener("click", togglePlay); }
+playBtn.addEventListener("click", togglePlay);
+
+// --- コントロールメニュー: タップしたときだけ表示 (5秒で自動的に隠れる) ---
+let controlsTimer = null;
+function showControls() {
+  controls.classList.add("visible");
+  clearTimeout(controlsTimer);
+  controlsTimer = setTimeout(() => controls.classList.remove("visible"), 5000);
+}
+// メニュー操作中は隠れないように延長
+controls.addEventListener("pointerdown", showControls);
+controls.addEventListener("change", showControls);
+
+// --- タップ判定 & 左右スワイプで早送り/巻き戻し ---
+function bindCanvas() {
+  canvas.addEventListener("pointerdown", (e) => {
+    ptr = { id: e.pointerId, x0: e.clientX, t0: performance.now(), pos0: playPos, moved: false };
+    try { canvas.setPointerCapture(e.pointerId); } catch (_) {}
+  });
+  canvas.addEventListener("pointermove", (e) => {
+    if (!ptr || e.pointerId !== ptr.id) return;
+    const dx = e.clientX - ptr.x0;
+    if (!ptr.moved && Math.abs(dx) > 8) { ptr.moved = true; scrubbing = true; }
+    if (scrubbing && playTotal > 0) {
+      // 画面幅いっぱいのスワイプ = ループ全体 (右スワイプで早送り / 左で巻き戻し)
+      const delta = (dx / Math.max(1, canvas.clientWidth)) * playTotal;
+      playPos = (((ptr.pos0 + delta) % playTotal) + playTotal) % playTotal;
+    }
+  });
+  const endPtr = (e) => {
+    if (!ptr || e.pointerId !== ptr.id) return;
+    const wasTap = !ptr.moved && performance.now() - ptr.t0 < 500;
+    scrubbing = false;
+    ptr = null;
+    if (wasTap) {
+      // タップ: コントロールメニューの表示/非表示を切り替え
+      if (controls.classList.contains("visible")) {
+        clearTimeout(controlsTimer);
+        controls.classList.remove("visible");
+      } else {
+        showControls();
+      }
+    }
+  };
+  canvas.addEventListener("pointerup", endPtr);
+  canvas.addEventListener("pointercancel", endPtr);
+}
 bindCanvas();
 document.addEventListener("keydown", (e) => {
   if (e.code === "Space") { e.preventDefault(); togglePlay(); }
