@@ -1,0 +1,1198 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Meteosat 24時間タイムラプス — ヨーロッパ静止衛星</title>
+<style>
+  html, body {
+    margin: 0; padding: 0; width: 100%; height: 100%;
+    background: #000; overflow: hidden;
+    font-family: "Hiragino Kaku Gothic ProN", "Hiragino Sans", "Yu Gothic UI", "Noto Sans JP", sans-serif;
+    color: #cfd8e3;
+  }
+  #view { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: pointer; background: #000; }
+
+  #hud {
+    position: absolute; top: 16px; left: 18px; z-index: 10;
+    user-select: none; pointer-events: none;
+  }
+  #hud .title { font-size: 15px; font-weight: 600; letter-spacing: .06em; color: #e8eef6; text-shadow: 0 1px 6px rgba(0,0,0,.8); }
+  #hud .sub   { font-size: 11px; margin-top: 3px; color: #8fa3b8; letter-spacing: .04em; }
+
+  #controls {
+    position: absolute; top: 14px; right: 16px; z-index: 10;
+    display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end;
+    max-width: 72vw;
+  }
+  #controls select, #controls button, #controls label.chk {
+    background: rgba(14, 20, 30, .78); color: #cfd8e3;
+    border: 1px solid rgba(120, 150, 190, .35); border-radius: 7px;
+    font-size: 12px; padding: 5px 8px; outline: none; cursor: pointer;
+    backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  }
+  #controls select:hover, #controls button:hover, #controls label.chk:hover { border-color: rgba(150, 190, 240, .7); }
+  #controls label.chk { display: inline-flex; align-items: center; gap: 5px; user-select: none; }
+  #controls label.chk input { accent-color: #4f9cf0; margin: 0; }
+
+  #bottombar {
+    position: absolute; left: 0; right: 0; bottom: 0; z-index: 10;
+    padding: 14px 20px 16px; pointer-events: none;
+    background: linear-gradient(to top, rgba(0,0,0,.55), rgba(0,0,0,0));
+  }
+  #frametime {
+    font-size: 22px; font-weight: 300; letter-spacing: .05em; color: #f2f6fb;
+    font-variant-numeric: tabular-nums; text-shadow: 0 1px 8px rgba(0,0,0,.9);
+  }
+  #frametime .utc { font-size: 12px; color: #93a7bd; margin-left: 10px; }
+  #status { font-size: 11px; color: #7f93a9; margin-top: 5px; letter-spacing: .03em; }
+  #credit { position: absolute; right: 18px; bottom: 14px; font-size: 10px; color: #63748a; z-index: 10; }
+  #credit a { color: #7f97b5; text-decoration: none; pointer-events: auto; }
+
+  #progress { position: absolute; left: 0; bottom: 0; height: 2px; background: linear-gradient(90deg, #3d8bfd, #6fd3ff); width: 0%; z-index: 11; }
+
+  #overlay {
+    position: absolute; inset: 0; z-index: 20; display: flex;
+    align-items: center; justify-content: center; flex-direction: column; gap: 14px;
+    background: #000;
+    transition: opacity .8s ease; text-align: center; padding: 0 24px;
+  }
+  #overlay.hidden { opacity: 0; pointer-events: none; }
+  #overlay .spinner {
+    width: 44px; height: 44px; border-radius: 50%;
+    border: 2px solid rgba(110, 160, 220, .25); border-top-color: #6fb4ff;
+    animation: spin 1s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #overlay .msg  { font-size: 14px; color: #b9c9da; letter-spacing: .05em; }
+  #overlay .msg2 { font-size: 11px; color: #6d8199; max-width: 560px; line-height: 1.9; }
+  #paused {
+    position: absolute; inset: 0; z-index: 9; display: none;
+    align-items: center; justify-content: center; pointer-events: none;
+  }
+  #paused span {
+    font-size: 12px; letter-spacing: .3em; color: rgba(230,240,250,.85);
+    background: rgba(10,16,24,.55); padding: 8px 18px 8px 22px; border-radius: 20px;
+    border: 1px solid rgba(120,150,190,.3);
+  }
+</style>
+</head>
+<body>
+<canvas id="view"></canvas>
+
+<div id="hud">
+  <div class="title">METEOSAT — ヨーロッパ静止気象衛星</div>
+  <div class="sub" id="hudsub"></div>
+</div>
+
+<div id="controls">
+  <select id="satSel" title="衛星">
+    <option value="mtg" selected>MTG 0° (欧州・アフリカ)</option>
+    <option value="iodc">IODC 41.5°E (トルコ・中東)</option>
+  </select>
+  <select id="layerSel" title="画像の種類"></select>
+  <select id="qualitySel" title="画質 (取得画像サイズ)">
+    <option value="1024">画質: 標準 (1024px)</option>
+    <option value="1440">画質: 高 (1440px)</option>
+    <option value="2160" selected>画質: 4K級 (2160px)</option>
+    <option value="2880">画質: 超高精細 (2880px)</option>
+  </select>
+  <select id="speedSel" title="再生速度 (24時間をこの秒数で)">
+    <option value="20">速度: 速い (24h→20秒)</option>
+    <option value="30" selected>速度: 標準 (24h→30秒)</option>
+    <option value="45">速度: ゆっくり (24h→45秒)</option>
+    <option value="60">速度: じっくり (24h→60秒)</option>
+  </select>
+  <select id="interpSel" title="フレーム補間方式">
+    <option value="motion" selected>補間: モーション (RIFE風)</option>
+    <option value="fade">補間: クロスフェード</option>
+  </select>
+  <label class="chk" title="IODCの不自然な緑を肉眼の見た目に近づけます"><input type="checkbox" id="fixChk" checked>色補正</label>
+  <button id="fsBtn" title="全画面表示">⛶ 全画面</button>
+</div>
+
+<div id="paused"><span>PAUSED</span></div>
+
+<div id="bottombar">
+  <div id="frametime">--:--<span class="utc"></span></div>
+  <div id="status">初期化中…</div>
+</div>
+<div id="credit">画像: <a href="https://view.eumetsat.int/" target="_blank" rel="noopener">© EUMETSAT</a></div>
+<div id="progress"></div>
+
+<div id="overlay">
+  <div class="spinner"></div>
+  <div class="msg" id="ovMsg">EUMETSAT に接続しています…</div>
+  <div class="msg2" id="ovMsg2"></div>
+</div>
+
+<script>
+"use strict";
+/* =========================================================================
+   Meteosat 24時間タイムラプス (v3)
+   - EUMETSAT EUMETView WMS からフルディスク画像を取得 (MTG 10分 / IODC 15分)
+   - 直近24時間を約30秒 (可変) でループ再生
+   - フレーム間補間: GPUオプティカルフロー (RIFE風モーション補間) or クロスフェード
+   - 背景は純黒・枠線/グロー無し
+   - IODC用の色補正 (植生の緑を抑え、雲を白く)
+   - 取得失敗は指数バックオフで自動再試行 / 新着画像で24時間窓が自動スライド
+   ========================================================================= */
+
+const WMS_BASE   = "https://view.eumetsat.int/geoserver/wms";
+const SATS = {
+  mtg: {
+    label: "MTG (0°) — ヨーロッパ・アフリカ", ns: "mtg_fd", lon: 0, step: 10 * 60 * 1000,
+    layers: {
+      truecolour: { id: "mtg_fd:rgb_truecolour", label: "自然色 (True Colour)" },
+      geocolour:  { id: "mtg_fd:rgb_geocolour",  label: "ジオカラー (夜も見える)" },
+      ir105:      { id: "mtg_fd:ir105_hrfi",     label: "赤外 IR10.5" },
+    },
+    defaultLayer: "truecolour",
+  },
+  iodc: {
+    label: "MSG IODC (41.5°E) — トルコ・中東・インド洋", ns: "msg_iodc", lon: 41.5, step: 15 * 60 * 1000,
+    layers: {
+      naturalenh: { id: "msg_iodc:rgb_naturalenhncd", label: "自然色 強調 (Natural)" },
+      natural:    { id: "msg_iodc:rgb_natural",       label: "自然色 (Natural)" },
+      ir108:      { id: "msg_iodc:ir108",             label: "赤外 IR10.8" },
+    },
+    defaultLayer: "naturalenh",
+  },
+};
+const WINDOW_MS   = 24 * 60 * 60 * 1000;
+const REFRESH_MS  = 4 * 60 * 1000;
+const BBOX_DEG    = 81.5;
+const MIN_LAG_MS  = 20 * 60 * 1000;
+const PROBE_BACK  = 24;
+
+const RETRY_SWEEP_MS   = 1500;           // 失敗フレームの再試行チェック間隔
+const RETRY_BASE_MS    = 2500;           // 一時的失敗: 初回リトライまで2.5秒 (以後 5s→10s→…)
+const RETRY_MAX_MS     = 90 * 1000;      // 一時的失敗: リトライ間隔の上限90秒
+const ABSENT_BASE_MS   = 2 * 60 * 1000;  // サーバー欠落 (WMS例外): 2分後に再確認
+const ABSENT_MAX_MS    = 10 * 60 * 1000; // サーバー欠落: 再確認間隔の上限10分
+const CONNECT_RETRY_MS = 30 * 1000;
+
+// ---------------- DOM ----------------
+let canvas     = document.getElementById("view");
+const elTime   = document.getElementById("frametime");
+const elStatus = document.getElementById("status");
+const elProg   = document.getElementById("progress");
+const overlay  = document.getElementById("overlay");
+const ovMsg    = document.getElementById("ovMsg");
+const ovMsg2   = document.getElementById("ovMsg2");
+const elPaused = document.getElementById("paused");
+const satSel   = document.getElementById("satSel");
+const layerSel = document.getElementById("layerSel");
+const qualSel  = document.getElementById("qualitySel");
+const speedSel = document.getElementById("speedSel");
+const interpSel= document.getElementById("interpSel");
+const fixChk   = document.getElementById("fixChk");
+const fsBtn    = document.getElementById("fsBtn");
+const hudsub   = document.getElementById("hudsub");
+
+// ---------------- 状態 ----------------
+let SESSION = 0;
+let corsOk  = false;
+let useGL   = false;
+let frames  = [];
+let latestT = 0;
+let activeSize = 1024;    // サーバーが受け付けた実際の画像サイズ
+let lastNewFrameAt = 0;
+let playing = true;
+let playPos = 0;
+let lastRAF = 0;
+let shownPairKey = "";
+
+// --- ビュー (フルディスク⇔ズーム) のカットスイッチング ---
+// 切り替えは常に瞬時のカット。切り替えタイミングは
+//   1) ループが最新フレームに達して先頭へ戻る瞬間 (ラップ)
+//   2) 再生が欠落フレーム区間に来た瞬間 (時間が飛ぶカットと同時にビューも切る)
+// で、フル → ズーム(上/中/下からランダム) → フル → … と交互に切り替わる。
+const FULL_VIEW = { cx: 0, cy: 0, z: 1 };
+const ZOOM_VIEWS = [
+  { cx: 0, cy:  0.5, z: 2.0, label: "上半分" },
+  { cx: 0, cy:  0.0, z: 2.0, label: "中央" },
+  { cx: 0, cy: -0.5, z: 2.0, label: "下半分" },
+];
+let curView = { ...FULL_VIEW };
+let lastZoomIdx = -1;
+let lastShownT = null;          // 直前に表示していたフレーム時刻 (カット検出用)
+let lastCutAt = 0;              // 読み込み中の連続カット防止
+const MIN_CUT_INTERVAL = 2000;
+
+function cutSwitchView() {
+  if (curView.z !== 1) { curView = { ...FULL_VIEW }; return; }
+  let idx;
+  do { idx = Math.floor(Math.random() * ZOOM_VIEWS.length); }
+  while (ZOOM_VIEWS.length > 1 && idx === lastZoomIdx);
+  lastZoomIdx = idx;
+  curView = { ...ZOOM_VIEWS[idx] };
+}
+
+const sat      = () => SATS[satSel.value];
+const stepMs   = () => sat().step;
+const nFrames  = () => Math.round(WINDOW_MS / stepMs()) + 1;
+const loopSec  = () => parseInt(speedSel.value, 10);
+const pairMs   = () => (loopSec() * 1000) / (nFrames() - 1);
+const layerId  = () => (sat().layers[layerSel.value] || sat().layers[sat().defaultLayer]).id;
+const imgSize  = () => parseInt(qualSel.value, 10);
+const wantMotion = () => interpSel.value === "motion";
+// 色補正はIODCの自然色レイヤーにのみ適用
+const colorFixActive = () =>
+  fixChk.checked && satSel.value === "iodc" && layerSel.value !== "ir108";
+
+function rebuildLayerOptions() {
+  const s = sat();
+  const prev = layerSel.value;
+  layerSel.innerHTML = "";
+  for (const [key, l] of Object.entries(s.layers)) {
+    const o = document.createElement("option");
+    o.value = key; o.textContent = l.label;
+    layerSel.appendChild(o);
+  }
+  layerSel.value = s.layers[prev] ? prev : s.defaultLayer;
+  hudsub.textContent = `${s.label} / 直近24時間 / ${Math.round(s.step / 60000)}分間隔 / 自動更新`;
+}
+
+// ---------------- ユーティリティ ----------------
+const floorSlot = (ms) => Math.floor(ms / stepMs()) * stepMs();
+const isoTime   = (ms) => new Date(ms).toISOString().replace(".000Z", "Z");
+
+function fmtJST(ms) {
+  const d = new Date(ms);
+  const jst = d.toLocaleString("ja-JP", { timeZone: "Asia/Tokyo",
+    year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+  const utc = d.toISOString().slice(11, 16);
+  return { jst, utc };
+}
+function fmtAgo(ms) {
+  const m = Math.round((Date.now() - ms) / 60000);
+  if (m < 1) return "たった今";
+  if (m < 60) return `${m}分前`;
+  return `${Math.floor(m / 60)}時間${m % 60}分前`;
+}
+
+function wmsUrl(t, size) {
+  const c = sat().lon;
+  const p = new URLSearchParams({
+    service: "WMS", version: "1.1.1", request: "GetMap",
+    layers: layerId(), styles: "",
+    srs: "EPSG:4326",
+    bbox: `${c - BBOX_DEG},${-BBOX_DEG},${c + BBOX_DEG},${BBOX_DEG}`,
+    width: String(size), height: String(size),
+    format: "image/jpeg", transparent: "false", bgcolor: "0x000000",
+    time: isoTime(t),
+  });
+  return `${WMS_BASE}?${p.toString()}`;
+}
+const capsUrl = () =>
+  `${WMS_BASE}?service=WMS&version=1.3.0&request=GetCapabilities&namespace=${sat().ns}&_=${Date.now()}`;
+
+// ---------------- 最新時刻の検出 ----------------
+async function latestFromCaps(session) {
+  const res = await fetch(capsUrl(), { signal: AbortSignal.timeout(20000) });
+  if (!res.ok) throw new Error(`caps HTTP ${res.status}`);
+  const xml = await res.text();
+  if (session !== SESSION) throw new Error("stale");
+  const doc = new DOMParser().parseFromString(xml, "text/xml");
+  const target = layerId();
+  let dimText = null;
+  for (const lyr of doc.getElementsByTagName("Layer")) {
+    const nameEl = lyr.getElementsByTagName("Name")[0];
+    if (!nameEl || nameEl.textContent.trim() !== target) continue;
+    for (const dim of lyr.getElementsByTagName("Dimension")) {
+      if ((dim.getAttribute("name") || "").toLowerCase() === "time") dimText = dim.textContent;
+    }
+    if (!dimText) {
+      for (const ext of lyr.getElementsByTagName("Extent")) {
+        if ((ext.getAttribute("name") || "").toLowerCase() === "time") dimText = ext.textContent;
+      }
+    }
+    break;
+  }
+  if (!dimText) throw new Error("time dimension not found");
+  let max = 0;
+  for (const m of dimText.matchAll(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?Z/g)) {
+    const v = Date.parse(m[0]);
+    if (v > max) max = v;
+  }
+  if (!max) throw new Error("no timestamps in dimension");
+  return floorSlot(max);
+}
+
+function probeImage(t, session, size = 128) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    const done = (ok) => { img.onload = img.onerror = null; resolve(ok && session === SESSION); };
+    img.onload = () => done(true);
+    img.onerror = () => done(false);
+    img.src = wmsUrl(t, size) + `&_=${Date.now()}`;
+    setTimeout(() => done(false), 25000);
+  });
+}
+
+async function latestByProbe(session) {
+  let t = floorSlot(Date.now() - MIN_LAG_MS);
+  for (let i = 0; i < PROBE_BACK; i++, t -= stepMs()) {
+    if (session !== SESSION) throw new Error("stale");
+    ovMsg2.textContent = `最新画像を探しています… (${isoTime(t)})`;
+    if (await probeImage(t, session)) return t;
+  }
+  throw new Error("probe failed");
+}
+
+// 希望サイズをサーバーが受け付けるか確認し、だめなら段階的に下げる
+async function pickWorkingSize(latest, session) {
+  const want = imgSize();
+  const candidates = [want, 2160, 2048, 1792, 1440, 1024]
+    .filter((s, i, a) => s <= want && a.indexOf(s) === i);
+  for (const s of candidates) {
+    if (session !== SESSION) throw new Error("stale");
+    if (await probeImage(latest, session, s)) return s;
+  }
+  return 1024;
+}
+
+// ---------------- フレームの取得 ----------------
+// kind: null=未判定 / "transient"=一時的失敗 (高速リトライ) / "absent"=サーバー側にデータが無い (低頻度で再確認)
+const newFrame = (t) => ({ t, blob: null, img: null, ok: null, tries: 0, nextTry: 0, kind: null, absentTries: 0 });
+
+function buildTimeline(latest) {
+  latestT = latest;
+  frames = [];
+  for (let i = nFrames() - 1; i >= 0; i--) {
+    frames.push(newFrame(latest - i * stepMs()));
+  }
+}
+
+let inFlight = 0;
+const queue = [];
+function enqueueAll(session) {
+  queue.length = 0;
+  for (let i = frames.length - 1; i >= 0; i--) if (frames[i].ok === null) queue.push(frames[i]);
+  pump(session);
+}
+function pump(session) {
+  while (inFlight < 5 && queue.length) {
+    const f = queue.shift();
+    inFlight++;
+    loadFrame(f, session).finally(() => {
+      inFlight--;
+      if (session === SESSION) { pump(session); updateStatus(); }
+    });
+  }
+}
+async function loadFrame(f, session) {
+  const url = wmsUrl(f.t, activeSize);
+  let failKind = "transient";
+  try {
+    if (useGL) {
+      let res;
+      try {
+        res = await fetch(url, { signal: AbortSignal.timeout(60000) });
+      } catch (e) { throw new Error("network"); }  // ネットワーク断・タイムアウト → 一時的失敗
+      const ct = res.headers.get("content-type") || "";
+      if (res.status === 404 || (res.ok && !ct.startsWith("image"))) {
+        // サーバーは応答したが画像が無い (WMS ServiceException / 404) = その時刻のデータが存在しない
+        failKind = "absent";
+        throw new Error("absent");
+      }
+      if (!res.ok) throw new Error("http " + res.status); // 5xx/429など → 一時的失敗
+      const blob = await res.blob();
+      if (session !== SESSION) return;
+      f.blob = blob; f.ok = true;
+    } else {
+      const img = await new Promise((resolve, reject) => {
+        const im = new Image();
+        im.onload = () => resolve(im);
+        im.onerror = () => reject(new Error("img error"));
+        im.src = url;
+        setTimeout(() => reject(new Error("timeout")), 90000);
+      });
+      if (session !== SESSION) return;
+      f.img = img; f.ok = true;
+    }
+    lastNewFrameAt = Date.now();
+    f.tries = 0; f.kind = null; f.absentTries = 0;
+  } catch (e) {
+    if (session !== SESSION) return;
+    f.ok = false;
+    // <img>モードでは失敗理由を区別できないため、4回連続失敗でデータ欠落とみなす
+    if (!useGL && (f.tries || 0) + 1 >= 4) failKind = "absent";
+    f.tries = (f.tries || 0) + 1;
+    if (failKind === "absent") {
+      // データが存在しない: 低頻度で再確認 (EUMETSATは後から遅延配信することがある)
+      f.kind = "absent";
+      f.absentTries = (f.absentTries || 0) + 1;
+      const backoff = Math.min(ABSENT_BASE_MS * Math.pow(2, f.absentTries - 1), ABSENT_MAX_MS);
+      f.nextTry = Date.now() + backoff * (0.9 + Math.random() * 0.2);
+    } else {
+      // 一時的失敗: 高速リトライ
+      f.kind = "transient";
+      const backoff = Math.min(RETRY_BASE_MS * Math.pow(2, f.tries - 1), RETRY_MAX_MS);
+      f.nextTry = Date.now() + backoff * (0.75 + Math.random() * 0.5);
+    }
+  }
+}
+
+function retrySweep() {
+  if (!frames.length) return;
+  const now = Date.now();
+  const due = frames.filter((f) => f.ok === false && now >= f.nextTry);
+  if (!due.length) return;
+  due.sort((a, b) => b.t - a.t);
+  for (const f of due) { f.ok = null; queue.push(f); }
+  pump(SESSION);
+  updateStatus();
+}
+
+const readyFrames = () => frames.filter((f) => f.ok === true);
+
+// ---------------- 新着チェック & 24時間窓のスライド ----------------
+async function refreshLatest(session) {
+  try {
+    let newest = null;
+    if (corsOk) {
+      newest = await latestFromCaps(session);
+      const cap = floorSlot(Date.now() - MIN_LAG_MS);
+      let probe = newest + stepMs();
+      while (probe <= cap && (await probeImage(probe, session))) { newest = probe; probe += stepMs(); }
+    } else {
+      const cap = floorSlot(Date.now() - MIN_LAG_MS);
+      for (let t = cap; t > latestT; t -= stepMs()) {
+        if (await probeImage(t, session)) { newest = t; break; }
+      }
+    }
+    if (session !== SESSION || newest === null || newest <= latestT) return;
+    for (let t = latestT + stepMs(); t <= newest; t += stepMs()) {
+      frames.push(newFrame(t));
+    }
+    latestT = newest;
+    const cutoff = latestT - WINDOW_MS;
+    while (frames.length && frames[0].t < cutoff) frames.shift();
+    enqueueAll(session);
+    updateStatus();
+  } catch (e) { /* 次回に再試行 */ }
+}
+
+// =========================================================================
+//  WebGL2 レンダラ
+//  - 球体投影 (静止衛星からの透視投影の逆変換)
+//  - オプティカルフロー (コース→ファインのHorn–Schunck) によるモーション補間
+//  - IODC色補正
+// =========================================================================
+let gl = null;
+let canFlow = false;         // floatテクスチャへのレンダリングが可能か
+let progGlobe = null, progGray = null, progFlow = null, progFlowPost = null, progHP = null;
+let locGlobe = {}, locGray = {}, locFlow = {}, locFlowPost = {}, locHP = {};
+let quadVAO = null;
+
+const GRAY_SIZE = 512;       // フロー推定用グレースケールの解像度
+const FLOW_SIZE = 128;       // フロー場の解像度
+
+// フレームテクスチャプール (3枚をローテーション)
+let texPool = [];            // [{tex, key}]
+// フロー関連
+let grayTexA = null, grayTexB = null, grayFBO = null;
+let hpTexA = null, hpTexB = null;
+let flowPing = [], flowFBO = [], flowTexKey = "", flowResult = null;
+let zeroFlowTex = null;
+
+const VS_QUAD = `#version 300 es
+layout(location=0) in vec2 aPos;
+out vec2 vUv;
+void main() { vUv = aPos * 0.5 + 0.5; gl_Position = vec4(aPos, 0.0, 1.0); }`;
+
+const VS_GLOBE = `#version 300 es
+layout(location=0) in vec2 aPos;
+uniform vec2 uScale;
+uniform vec3 uView;   // (中心x, 中心y, ズーム倍率) — ディスク半径=1の座標系
+out vec2 vPos;
+out vec2 vUvFull;
+void main() {
+  vPos = aPos * uScale / uView.z + uView.xy;
+  vUvFull = aPos * 0.5 + 0.5;
+  gl_Position = vec4(aPos, 0.0, 1.0);
+}`;
+
+const FS_GRAY = `#version 300 es
+precision highp float;
+in vec2 vUv;
+uniform sampler2D uSrc;
+out vec4 oCol;
+void main() {
+  vec3 c = texture(uSrc, vUv).rgb;
+  oCol = vec4(vec3(dot(c, vec3(0.299, 0.587, 0.114))), 1.0);
+}`;
+
+// 照明正規化 (ハイパス): 大きなスケールの明るさ変化 (昼夜境界・太陽反射) を除去し、
+// 雲などのテクスチャだけを動き推定の対象にする
+const FS_HIGHPASS = `#version 300 es
+precision highp float;
+in vec2 vUv;
+uniform sampler2D uGray;
+out vec4 oCol;
+void main() {
+  float fine   = textureLod(uGray, vUv, 0.0).r;
+  float coarse = textureLod(uGray, vUv, 3.5).r;  // 約45px相当のぼかし = 照明成分
+  oCol = vec4(vec3(clamp(0.5 + (fine - coarse) * 2.0, 0.0, 1.0)), 1.0);
+}`;
+
+// Horn–Schunck 1反復 (指定LODで画像勾配を取り、近傍平均フローを補正)
+const FS_FLOW = `#version 300 es
+precision highp float;
+in vec2 vUv;
+uniform sampler2D uGrayA;
+uniform sampler2D uGrayB;
+uniform sampler2D uPrev;
+uniform float uLod;        // グレースケールピラミッドのLOD
+uniform vec2  uFlowTexel;  // フローテクスチャの1px (uv)
+uniform float uFirst;      // 1.0なら初期化 (フロー0から)
+out vec4 oFlow;
+void main() {
+  vec2 f = vec2(0.0);
+  if (uFirst < 0.5) {
+    vec2 t = uFlowTexel;
+    f = ( texture(uPrev, vUv + vec2( t.x, 0.0)).xy
+        + texture(uPrev, vUv + vec2(-t.x, 0.0)).xy
+        + texture(uPrev, vUv + vec2(0.0,  t.y)).xy
+        + texture(uPrev, vUv + vec2(0.0, -t.y)).xy ) * 0.25;
+  }
+  float lodTexel = exp2(uLod) / ${GRAY_SIZE.toFixed(1)};  // このLODでの1pxのuv幅
+  float a  = textureLod(uGrayA, vUv, uLod).r;
+  vec2 w   = vUv + f;
+  float b  = textureLod(uGrayB, w, uLod).r;
+  float bx0 = textureLod(uGrayB, w - vec2(lodTexel, 0.0), uLod).r;
+  float bx1 = textureLod(uGrayB, w + vec2(lodTexel, 0.0), uLod).r;
+  float by0 = textureLod(uGrayB, w - vec2(0.0, lodTexel), uLod).r;
+  float by1 = textureLod(uGrayB, w + vec2(0.0, lodTexel), uLod).r;
+  vec2 g = vec2(bx1 - bx0, by1 - by0) * 0.5;   // 輝度勾配 (LODピクセル単位)
+  float It = b - a;
+  // ピクセル単位で更新して uv に戻す
+  vec2 fpix = f / lodTexel;
+  fpix -= It * g / (0.02 + dot(g, g));
+  f = fpix * lodTexel;
+  // 発散防止: 実際の雲の10-15分移動量に合わせた控えめな上限 (±2% uv ≒ 10px @512)
+  f = clamp(f, vec2(-0.02), vec2(0.02));
+  oFlow = vec4(f, 0.0, 1.0);
+}`;
+
+// フローの後処理: 平滑化 + 暗部 (夜側・宇宙・データ欠損) での抑制
+const FS_FLOW_POST = `#version 300 es
+precision highp float;
+in vec2 vUv;
+uniform sampler2D uPrev;    // フロー
+uniform sampler2D uGrayA;   // 元の輝度 (暗部判定用)
+uniform sampler2D uGrayB;
+uniform vec2 uFlowTexel;
+out vec4 oFlow;
+void main() {
+  vec2 t = uFlowTexel;
+  // 3x3テントフィルタで平滑化 (スパイク状の誤推定を除去)
+  vec2 f = texture(uPrev, vUv).xy * 4.0;
+  f += texture(uPrev, vUv + vec2( t.x, 0.0)).xy * 2.0;
+  f += texture(uPrev, vUv + vec2(-t.x, 0.0)).xy * 2.0;
+  f += texture(uPrev, vUv + vec2(0.0,  t.y)).xy * 2.0;
+  f += texture(uPrev, vUv + vec2(0.0, -t.y)).xy * 2.0;
+  f += texture(uPrev, vUv + vec2( t.x,  t.y)).xy;
+  f += texture(uPrev, vUv + vec2( t.x, -t.y)).xy;
+  f += texture(uPrev, vUv + vec2(-t.x,  t.y)).xy;
+  f += texture(uPrev, vUv + vec2(-t.x, -t.y)).xy;
+  f /= 16.0;
+  // テクスチャの無い暗部では動きを推定できない → フローを殺してフェードに任せる
+  float a = textureLod(uGrayA, vUv, 2.0).r;
+  float b = textureLod(uGrayB, vUv, 2.0).r;
+  f *= smoothstep(0.02, 0.10, max(a, b));
+  // ワープ補償済みの大域輝度照合: 「動き」で説明できる変化 (雲の移動) はフローを保ち、
+  // 説明できない変化 (昼夜境界・太陽反射・雲の生成消滅) はフローを殺してフェードに任せる
+  float ca = textureLod(uGrayA, vUv, 3.5).r;
+  float cb = textureLod(uGrayB, vUv + f, 3.5).r;
+  f *= 1.0 - smoothstep(0.08, 0.22, abs(ca - cb));
+  oFlow = vec4(f, 0.0, 1.0);
+}`;
+
+const FS_GLOBE = `#version 300 es
+precision highp float;
+in vec2 vPos;
+in vec2 vUvFull;
+uniform sampler2D uTexA;
+uniform sampler2D uTexB;
+uniform sampler2D uFlow;
+uniform float uMix;
+uniform float uFlowOn;
+uniform float uFix;
+uniform float uPx;        // ディスク半径1.0に対する1画面ピクセル
+out vec4 oCol;
+
+const float R = 6371.0;
+const float D = 42164.0;
+const float BB = ${BBOX_DEG.toFixed(1)};
+
+// IODC色補正: 植生の緑を抑えて暗く、雲 (灰色・シアン) をより白く
+vec3 iodcFix(vec3 c) {
+  float lum = dot(c, vec3(0.299, 0.587, 0.114));
+  float mx = max(c.r, max(c.g, c.b));
+  float mn = min(c.r, min(c.g, c.b));
+  float sat = mx - mn;
+  // 氷雲のシアンかぶり → 白へ
+  float cyan = clamp((min(c.g, c.b) - c.r) * 4.0, 0.0, 1.0) * clamp((lum - 0.30) * 3.0, 0.0, 1.0);
+  c = mix(c, vec3(mx), cyan * 0.85);
+  // 植生 (緑が支配的で明るすぎない領域): 緑を減らし全体を暗い茶緑に
+  float veg = clamp((c.g - max(c.r, c.b)) * 5.0, 0.0, 1.0)
+            * (1.0 - clamp((lum - 0.55) * 4.0, 0.0, 1.0));
+  vec3 vegCol = vec3(c.r * 1.04, c.g * 0.52, c.b * 0.72) * 0.62;
+  c = mix(c, vegCol, veg * 0.9);
+  // 雲 (高輝度・低彩度) をさらに白く
+  lum = dot(c, vec3(0.299, 0.587, 0.114));
+  sat = max(c.r, max(c.g, c.b)) - min(c.r, min(c.g, c.b));
+  float cloud = clamp((lum - 0.38) * 2.6, 0.0, 1.0) * (1.0 - clamp(sat * 2.8, 0.0, 1.0));
+  c = mix(c, clamp(c * 1.30 + 0.05, 0.0, 1.0), cloud * 0.9);
+  return clamp(c, 0.0, 1.0);
+}
+
+vec3 sampleBlend(vec2 uv) {
+  vec3 colA0 = texture(uTexA, uv).rgb;
+  vec3 colB0 = texture(uTexB, uv).rgb;
+  vec3 faded = mix(colA0, colB0, uMix);          // 通常のクロスフェード
+  if (uFlowOn < 0.5) return faded;
+
+  vec2 flow = texture(uFlow, uv).xy;
+  float mag = length(flow);
+  if (mag < 0.0005) return faded;                 // ほぼ静止ならフェードで十分
+
+  // モーション補間: Aを前方へ、Bを後方へワープして合成
+  vec3 colAw = texture(uTexA, uv - flow * uMix).rgb;
+  vec3 colBw = texture(uTexB, uv + flow * (1.0 - uMix)).rgb;
+  vec3 warped = mix(colAw, colBw, uMix);
+
+  // 信頼度: ワープ後のAとBが一致するほどフローが正しい。
+  // 不一致 (明暗の変化・オクルージョン・誤推定) はクロスフェードへ滑らかに退避。
+  // 完全に信頼できる場合でも1割はフェードを混ぜ、残留アーティファクトを抑える。
+  float err = length(colAw - colBw);
+  float conf = (1.0 - smoothstep(0.04, 0.15, err)) * 0.9;
+  return mix(faded, warped, conf);
+}
+
+// 全体の色調整: 青みを強め、コントラストを上げる
+vec3 grade(vec3 c) {
+  c *= vec3(0.94, 1.00, 1.12);            // ホワイトバランスを寒色側へ
+  c = (c - 0.5) * 1.18 + 0.5;             // コントラスト
+  return clamp(c, 0.0, 1.0);
+}
+
+void main() {
+  float r = length(vPos);
+  // 背景: 純黒 (星・グローなし)
+  if (r >= 1.0) { oCol = vec4(0.0, 0.0, 0.0, 1.0); return; }
+
+  float rho = asin(R / D);
+  float tr  = tan(rho);
+  vec3 dir  = normalize(vec3(vPos.x * tr, vPos.y * tr, -1.0));
+  float bq  = D * dir.z;
+  float disc = bq * bq - (D * D - R * R);
+  if (disc < 0.0) { oCol = vec4(0.0, 0.0, 0.0, 1.0); return; }
+  float t = -bq - sqrt(disc);
+  vec3 P = vec3(t * dir.x, t * dir.y, D + t * dir.z);
+
+  float lat = degrees(asin(clamp(P.y / R, -1.0, 1.0)));
+  float lon = degrees(atan(P.x, P.z));
+  vec2 uv = vec2((lon + BB) / (2.0 * BB), (BB - lat) / (2.0 * BB));
+
+  vec3 col = sampleBlend(uv);
+  if (uFix > 0.5) col = iodcFix(col);
+  col = grade(col);
+
+  // ディスク縁のアンチエイリアスのみ (発光やリングは描かない)
+  col *= smoothstep(1.0, 1.0 - 1.5 * uPx, r);
+  oCol = vec4(col, 1.0);
+}`;
+
+function compileProgram(vsSrc, fsSrc) {
+  const mk = (type, src) => {
+    const s = gl.createShader(type);
+    gl.shaderSource(s, src); gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+    return s;
+  };
+  const p = gl.createProgram();
+  gl.attachShader(p, mk(gl.VERTEX_SHADER, vsSrc));
+  gl.attachShader(p, mk(gl.FRAGMENT_SHADER, fsSrc));
+  gl.linkProgram(p);
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+  return p;
+}
+
+function mkTex(w, h, internal, filter, levels) {
+  const t = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, t);
+  gl.texStorage2D(gl.TEXTURE_2D, levels || 1, internal, w, h);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER,
+    levels && levels > 1 ? gl.LINEAR_MIPMAP_LINEAR : filter);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, filter);
+  return t;
+}
+
+function initGL() {
+  gl = canvas.getContext("webgl2", { antialias: true, alpha: false });
+  if (!gl) return "none";
+  try {
+    progGlobe    = compileProgram(VS_GLOBE, FS_GLOBE);
+    progGray     = compileProgram(VS_QUAD, FS_GRAY);
+    progHP       = compileProgram(VS_QUAD, FS_HIGHPASS);
+    progFlow     = compileProgram(VS_QUAD, FS_FLOW);
+    progFlowPost = compileProgram(VS_QUAD, FS_FLOW_POST);
+
+    quadVAO = gl.createVertexArray();
+    gl.bindVertexArray(quadVAO);
+    const buf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+
+    const uni = (p, names) => { const o = {}; for (const n of names) o[n] = gl.getUniformLocation(p, n); return o; };
+    locGlobe = uni(progGlobe, ["uScale","uTexA","uTexB","uFlow","uMix","uFlowOn","uFix","uPx","uView"]);
+    locGray  = uni(progGray,  ["uSrc"]);
+    locFlow  = uni(progFlow,  ["uGrayA","uGrayB","uPrev","uLod","uFlowTexel","uFirst"]);
+    locFlowPost = uni(progFlowPost, ["uPrev","uGrayA","uGrayB","uFlowTexel"]);
+    locHP = uni(progHP, ["uGray"]);
+
+    // フロー用リソース (floatレンダリング対応をチェック)
+    canFlow = !!gl.getExtension("EXT_color_buffer_float");
+    if (canFlow) {
+      const levels = Math.log2(GRAY_SIZE) + 1;
+      grayTexA = mkTex(GRAY_SIZE, GRAY_SIZE, gl.R8, gl.LINEAR, levels);
+      grayTexB = mkTex(GRAY_SIZE, GRAY_SIZE, gl.R8, gl.LINEAR, levels);
+      hpTexA   = mkTex(GRAY_SIZE, GRAY_SIZE, gl.R8, gl.LINEAR, levels);
+      hpTexB   = mkTex(GRAY_SIZE, GRAY_SIZE, gl.R8, gl.LINEAR, levels);
+      grayFBO  = gl.createFramebuffer();
+      for (let i = 0; i < 2; i++) {
+        flowPing.push(mkTex(FLOW_SIZE, FLOW_SIZE, gl.RGBA16F, gl.LINEAR, 1));
+        flowFBO.push(gl.createFramebuffer());
+        gl.bindFramebuffer(gl.FRAMEBUFFER, flowFBO[i]);
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, flowPing[i], 0);
+      }
+      if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) canFlow = false;
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    }
+    // フロー無効時に使うゼロフロー (1x1黒 RGBA8)
+    zeroFlowTex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, zeroFlowTex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0,0,0,255]));
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+
+    // フレームテクスチャプール
+    texPool = [{ tex: null, key: 0 }, { tex: null, key: 0 }, { tex: null, key: 0 }];
+  } catch (e) {
+    gl = null;
+    return "fail";
+  }
+  return "ok";
+}
+
+// bitmapを (必要なら確保して) プールのテクスチャへアップロード
+function uploadFrameTex(slot, bm, key) {
+  if (!slot.tex) {
+    slot.tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, slot.tex);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  } else {
+    gl.bindTexture(gl.TEXTURE_2D, slot.tex);
+  }
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB8, gl.RGB, gl.UNSIGNED_BYTE, bm);
+  slot.key = key;
+}
+function ensureFrameTex(f, keepKeys) {
+  let slot = texPool.find((s) => s.key === f.t);
+  if (slot) return slot.tex;
+  const bm = ensureBitmap(f);
+  if (!bm) return null;
+  // 現在のペアで使用中のテクスチャは追い出さない (ループ先頭に戻るときに重要)
+  const evictable = texPool.filter((s) => !keepKeys.includes(s.key));
+  slot = evictable.find((s) => !s.key) || evictable[0] || texPool[0];
+  uploadFrameTex(slot, bm, f.t);
+  return slot.tex;
+}
+
+// ペア (fa→fb) のオプティカルフローを計算 (結果はflowResultに)
+function computeFlow(texA, texB, key) {
+  if (flowTexKey === key) return;
+  gl.bindVertexArray(quadVAO);
+  gl.viewport(0, 0, GRAY_SIZE, GRAY_SIZE);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, grayFBO);
+  // 1) グレースケール化 + ミップ生成
+  gl.useProgram(progGray);
+  gl.uniform1i(locGray.uSrc, 0);
+  gl.activeTexture(gl.TEXTURE0);
+  for (const [src, dst] of [[texA, grayTexA], [texB, grayTexB]]) {
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, dst, 0);
+    gl.bindTexture(gl.TEXTURE_2D, src);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    gl.bindTexture(gl.TEXTURE_2D, dst);
+    gl.generateMipmap(gl.TEXTURE_2D);
+  }
+  // 2) 照明正規化 (ハイパス): 昼夜境界や太陽反射などの照明変化を除去
+  gl.useProgram(progHP);
+  gl.uniform1i(locHP.uGray, 0);
+  for (const [src, dst] of [[grayTexA, hpTexA], [grayTexB, hpTexB]]) {
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, dst, 0);
+    gl.bindTexture(gl.TEXTURE_2D, src);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    gl.bindTexture(gl.TEXTURE_2D, dst);
+    gl.generateMipmap(gl.TEXTURE_2D);
+  }
+  // 3) コース→ファインで反復 (入力はハイパス済みテクスチャ)
+  gl.useProgram(progFlow);
+  gl.uniform1i(locFlow.uGrayA, 0);
+  gl.uniform1i(locFlow.uGrayB, 1);
+  gl.uniform1i(locFlow.uPrev, 2);
+  gl.uniform2f(locFlow.uFlowTexel, 1 / FLOW_SIZE, 1 / FLOW_SIZE);
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, hpTexA);
+  gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, hpTexB);
+  gl.viewport(0, 0, FLOW_SIZE, FLOW_SIZE);
+  let src = 0, first = true;
+  for (const lod of [4, 3, 2]) {
+    gl.uniform1f(locFlow.uLod, lod);
+    for (let i = 0; i < 10; i++) {
+      const dst = 1 - src;
+      gl.bindFramebuffer(gl.FRAMEBUFFER, flowFBO[dst]);
+      gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, flowPing[src]);
+      gl.uniform1f(locFlow.uFirst, first ? 1.0 : 0.0);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      src = dst; first = false;
+    }
+  }
+  // 4) 後処理: 平滑化 + 暗部抑制 (4パス — フロー場を極めて滑らかに保つ)
+  gl.useProgram(progFlowPost);
+  gl.uniform1i(locFlowPost.uPrev, 2);
+  gl.uniform1i(locFlowPost.uGrayA, 0);
+  gl.uniform1i(locFlowPost.uGrayB, 1);
+  gl.uniform2f(locFlowPost.uFlowTexel, 1 / FLOW_SIZE, 1 / FLOW_SIZE);
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, grayTexA);
+  gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, grayTexB);
+  for (let i = 0; i < 4; i++) {
+    const dst = 1 - src;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, flowFBO[dst]);
+    gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, flowPing[src]);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    src = dst;
+  }
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  flowResult = flowPing[src];
+  flowTexKey = key;
+}
+
+// ---------------- デコード管理 (blob → ImageBitmap) ----------------
+const bmCache = new Map();
+const maxBitmapCache = () => (activeSize >= 2048 ? 6 : 12);
+function ensureBitmap(f) {
+  const c = bmCache.get(f.t);
+  if (c) return c.bm || null;
+  if (!f.blob) return null;
+  const entry = {};
+  entry.promise = createImageBitmap(f.blob)
+    .then((bm) => { entry.bm = bm; })
+    .catch(() => { bmCache.delete(f.t); });
+  bmCache.set(f.t, entry);
+  return null;
+}
+function pruneBitmaps(currentT) {
+  if (bmCache.size <= maxBitmapCache() + 2) return;
+  const keep = new Set();
+  const ready = readyFrames();
+  const idx = ready.findIndex((f) => f.t === currentT);
+  for (let d = -1; d <= maxBitmapCache(); d++) {
+    const f = ready[(idx + d + ready.length) % ready.length];
+    if (f) keep.add(f.t);
+  }
+  for (const [t, e] of bmCache) {
+    if (!keep.has(t) && e.bm) { e.bm.close(); bmCache.delete(t); }
+  }
+}
+
+// ---------------- 描画 ----------------
+function resize() {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  canvas.width  = Math.round(canvas.clientWidth  * dpr);
+  canvas.height = Math.round(canvas.clientHeight * dpr);
+  if (gl) gl.viewport(0, 0, canvas.width, canvas.height);
+}
+window.addEventListener("resize", resize);
+
+let ctx2d = null;
+function draw(fa, fb, mixv, isGap, view) {
+  view = view || curView;
+  if (useGL && gl) {
+    const keep = [fa.t, fb.t];
+    const texA = ensureFrameTex(fa, keep);
+    const texB = ensureFrameTex(fb, keep);
+    if (!texA || !texB) return false;
+    const motion = wantMotion() && canFlow && !isGap;
+    if (motion) computeFlow(texA, texB, `${fa.t}_${fb.t}`);
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    gl.useProgram(progGlobe);
+    gl.bindVertexArray(quadVAO);
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, texA);
+    gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, texB);
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_2D, motion && flowResult ? flowResult : zeroFlowTex);
+    gl.uniform1i(locGlobe.uTexA, 0);
+    gl.uniform1i(locGlobe.uTexB, 1);
+    gl.uniform1i(locGlobe.uFlow, 2);
+    const w = canvas.width, h = canvas.height;
+    const rPx = 0.47 * Math.min(w, h);
+    gl.uniform2f(locGlobe.uScale, w / 2 / rPx, h / 2 / rPx);
+    gl.uniform3f(locGlobe.uView, view.cx, view.cy, view.z);
+    gl.uniform1f(locGlobe.uPx, 1 / (rPx * view.z));
+    gl.uniform1f(locGlobe.uMix, mixv);
+    gl.uniform1f(locGlobe.uFlowOn, motion && flowResult ? 1 : 0);
+    gl.uniform1f(locGlobe.uFix, colorFixActive() ? 1 : 0);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    pruneBitmaps(fa.t);
+    return true;
+  }
+  // 2Dフォールバック (クロスフェードのみ)
+  if (!ctx2d) ctx2d = canvas.getContext("2d");
+  if (!ctx2d) return false;
+  const iA = fa.img, iB = fb.img;
+  if (!iA || !iA.complete || !iB || !iB.complete) return false;
+  const w = canvas.width, h = canvas.height;
+  const s = Math.min(w, h) * 0.94 * view.z;
+  const x = (w - s) / 2 - view.cx * (s / 2);
+  const y = (h - s) / 2 + view.cy * (s / 2);
+  ctx2d.filter = "none";
+  ctx2d.fillStyle = "#000";
+  ctx2d.fillRect(0, 0, w, h);
+  // 簡易の色調整 (青み + コントラスト)
+  ctx2d.filter = "contrast(115%) saturate(105%) hue-rotate(-4deg)";
+  ctx2d.globalAlpha = 1;
+  ctx2d.drawImage(iA, x, y, s, s);
+  ctx2d.globalAlpha = mixv;
+  ctx2d.drawImage(iB, x, y, s, s);
+  ctx2d.globalAlpha = 1;
+  ctx2d.filter = "none";
+  return true;
+}
+
+// WebGLのcontext取得後に失敗した場合、2D用にcanvasを作り直す
+function replaceCanvas() {
+  const fresh = document.createElement("canvas");
+  fresh.id = "view";
+  canvas.parentNode.replaceChild(fresh, canvas);
+  canvas = fresh;
+  bindCanvas();
+}
+
+let modeDecided = false;
+function decideRenderMode() {
+  if (modeDecided) return;
+  modeDecided = true;
+  if (corsOk) {
+    const r = initGL();
+    if (r === "ok") { useGL = true; }
+    else { useGL = false; if (r === "fail") replaceCanvas(); }
+  } else {
+    useGL = false;
+  }
+  resize();
+}
+
+// ---------------- 再生ループ ----------------
+function tick(now) {
+  requestAnimationFrame(tick);
+  const dt = lastRAF ? Math.min(now - lastRAF, 100) : 0;
+  lastRAF = now;
+  const ready = readyFrames();
+  if (ready.length < 2) return;
+
+  // 連続したフレーム間だけを一定レート (pairMs) で再生する。
+  // 欠落区間は尺ゼロ = 再生ヘッドが瞬時に飛び越え、映像はカットでつながる。
+  // ホールドは置かず、同じ時刻のフレームで停止することは無い。
+  const P = pairMs(), step = stepMs();
+  const durs = new Array(ready.length - 1);
+  let total = 0;
+  for (let i = 0; i < ready.length - 1; i++) {
+    const gap = (ready[i + 1].t - ready[i].t) > step * 1.5;
+    durs[i] = gap ? 0 : P;
+    total += durs[i];
+  }
+  if (total <= 0) { durs.fill(P); total = durs.length * P; } // 全区間が欠落跨ぎの場合の保険
+  let wrapped = false;
+  if (playing) {
+    const prev = playPos;
+    playPos = (playPos + dt) % total;
+    if (playPos < prev - 1) wrapped = true; // ループ先頭へ戻った
+  }
+  if (playPos >= total) playPos = 0;
+
+  let acc = 0, k = durs.length - 1;
+  for (let i = 0; i < durs.length; i++) {
+    if (durs[i] > 0 && playPos < acc + durs[i]) { k = i; break; }
+    acc += durs[i];
+  }
+  const frac = durs[k] > 0 ? Math.max(0, Math.min(1, (playPos - acc) / durs[k])) : 1;
+  const fa = ready[k], fb = ready[k + 1];
+  // 欠落を跨ぐ区間 (通常は尺ゼロで通過しない。末尾などで残る場合はフェードせず後フレームを即表示)
+  const isGap = (fb.t - fa.t) > step * 1.5;
+  const mixv = isGap ? 1 : frac;
+  const shownTNow = isGap ? fb.t : (frac < 0.5 ? fa.t : fb.t);
+
+  // カット検出: ラップ、または表示時刻が前方へ飛んだ (=欠落を跨いだ) 瞬間にビューを瞬時に切替
+  if (playing) {
+    const jumped = lastShownT !== null && shownTNow - lastShownT > step * 1.5;
+    if ((wrapped || jumped) && now - lastCutAt > MIN_CUT_INTERVAL) {
+      cutSwitchView();
+      lastCutAt = now;
+    }
+    lastShownT = shownTNow;
+  }
+
+  if (draw(fa, fb, mixv, isGap)) {
+    const shownT = shownTNow;
+    const key = `${shownT}`;
+    if (key !== shownPairKey) {
+      shownPairKey = key;
+      const { jst, utc } = fmtJST(shownT);
+      elTime.innerHTML = `${jst} JST<span class="utc">${utc} UTC</span>`;
+    }
+    elProg.style.width = `${(playPos / total) * 100}%`;
+  }
+  // 先読みデコード
+  if (useGL) for (let d = 1; d <= 3; d++) { const f = ready[(k + d) % ready.length]; if (f) ensureBitmap(f); }
+}
+
+function updateStatus() {
+  const ready = readyFrames().length;
+  const failed = frames.filter((f) => f.ok === false).length;
+  const absent = frames.filter((f) => f.ok === false && f.kind === "absent").length;
+  const transient = failed - absent;
+  const { jst } = fmtJST(latestT);
+  // 分母はサーバーに存在するはずの枚数 (欠落コマは除外して表示)
+  let s = `最新画像: ${jst} JST (${fmtAgo(latestT)})　|　${ready}/${frames.length - absent} 枚　|　${activeSize}px`;
+  if (absent > 0) s += `　(衛星データ欠落 ${absent}コマ — 定期確認中)`;
+  if (transient > 0) s += `　(取得失敗 ${transient}枚 — 自動再試行中)`;
+  if (useGL) s += wantMotion() && canFlow ? "　|　モーション補間" : "　|　クロスフェード";
+  else s += "　|　簡易表示モード";
+  s += `　|　${(sat().layers[layerSel.value] || sat().layers[sat().defaultLayer]).label}`;
+  elStatus.textContent = s;
+  if (ready >= 2) overlay.classList.add("hidden");
+  else if (ready === 0 && failed >= frames.length && frames.length > 0) {
+    showError("画像を取得できませんでした。",
+      "ネットワーク接続をご確認ください。プロキシ環境では view.eumetsat.int への接続が必要です。このまま自動的に再試行を続けます。",
+      true);
+  }
+}
+function showError(msg, msg2, keepSpinner) {
+  overlay.classList.remove("hidden");
+  overlay.querySelector(".spinner").style.display = keepSpinner ? "" : "none";
+  ovMsg.textContent = msg;
+  ovMsg2.textContent = msg2 || "";
+}
+
+// ---------------- 起動・設定変更 ----------------
+let connectRetryTimer = null;
+function scheduleConnectRetry(session) {
+  clearTimeout(connectRetryTimer);
+  connectRetryTimer = setTimeout(() => {
+    if (session === SESSION) start();
+  }, CONNECT_RETRY_MS);
+}
+
+async function start() {
+  const session = ++SESSION;
+  clearTimeout(connectRetryTimer);
+  playPos = 0; shownPairKey = "";
+  curView = { ...FULL_VIEW }; lastZoomIdx = -1;
+  lastShownT = null; lastCutAt = 0;
+  flowTexKey = ""; flowResult = null;
+  for (const s of texPool) s.key = 0;
+  for (const [, e] of bmCache) if (e.bm) e.bm.close();
+  bmCache.clear();
+  queue.length = 0;
+  overlay.classList.remove("hidden");
+  overlay.querySelector(".spinner").style.display = "";
+  ovMsg.textContent = "EUMETSAT に接続しています…";
+  ovMsg2.textContent = "";
+
+  let latest = null;
+  try {
+    latest = await latestFromCaps(session);
+    corsOk = true;
+  } catch (e) {
+    if (session !== SESSION) return;
+    corsOk = false;
+  }
+  if (session !== SESSION) return;
+
+  try {
+    if (corsOk) {
+      const cap = floorSlot(Date.now() - MIN_LAG_MS);
+      let probe = latest + stepMs();
+      while (probe <= cap && (await probeImage(probe, session))) { latest = probe; probe += stepMs(); }
+    } else {
+      ovMsg.textContent = "最新画像を探しています… (簡易モード)";
+      latest = await latestByProbe(session);
+    }
+  } catch (e) {
+    if (session !== SESSION) return;
+    showError("EUMETSAT のサービスに接続できませんでした。",
+      "ネットワーク接続をご確認ください。30秒後に自動的に再接続します。", true);
+    scheduleConnectRetry(session);
+    return;
+  }
+  if (session !== SESSION) return;
+
+  decideRenderMode();
+
+  // 希望画質をサーバーが受けるか確認 (だめなら自動で下げる)
+  ovMsg.textContent = "画質を確認しています…";
+  try { activeSize = await pickWorkingSize(latest, session); }
+  catch (e) { if (session !== SESSION) return; activeSize = 1024; }
+  if (session !== SESSION) return;
+
+  ovMsg.textContent = "画像を読み込んでいます…";
+  ovMsg2.textContent = `直近24時間 (${nFrames()}枚 / ${activeSize}px) を新しい順に取得します。再生は数枚そろい次第始まります。`;
+  buildTimeline(latest);
+  enqueueAll(session);
+  updateStatus();
+}
+
+satSel.addEventListener("change", () => { rebuildLayerOptions(); start(); });
+layerSel.addEventListener("change", start);
+qualSel.addEventListener("change", start);
+speedSel.addEventListener("change", updateStatus);
+interpSel.addEventListener("change", updateStatus);
+fixChk.addEventListener("change", updateStatus);
+fsBtn.addEventListener("click", () => {
+  if (document.fullscreenElement) document.exitFullscreen();
+  else document.documentElement.requestFullscreen().catch(() => {});
+});
+function togglePlay() {
+  playing = !playing;
+  elPaused.style.display = playing ? "none" : "flex";
+}
+function bindCanvas() { canvas.addEventListener("click", togglePlay); }
+bindCanvas();
+document.addEventListener("keydown", (e) => {
+  if (e.code === "Space") { e.preventDefault(); togglePlay(); }
+});
+
+setInterval(() => { refreshLatest(SESSION); }, REFRESH_MS);
+setInterval(retrySweep, RETRY_SWEEP_MS);
+setInterval(updateStatus, 30000);
+
+rebuildLayerOptions();
+resize();
+requestAnimationFrame(tick);
+start();
+</script>
+</body>
+</html>
