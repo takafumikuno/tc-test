@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -12,7 +11,7 @@
     font-family: "Hiragino Kaku Gothic ProN", "Hiragino Sans", "Yu Gothic UI", "Noto Sans JP", sans-serif;
     color: #cfd8e3;
   }
-  #view { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: grab; background: #000; touch-action: none; }
+  #view { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: pointer; background: #000; touch-action: none; }
 
   #hud {
     position: absolute; top: 16px; left: 18px; z-index: 10;
@@ -35,8 +34,6 @@
     backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
   }
   #controls select:hover, #controls button:hover, #controls label.chk:hover { border-color: rgba(150, 190, 240, .7); }
-  #controls button.active { background: rgba(61, 139, 253, .35); border-color: #6fb4ff; }   /* 回転ボタン押下中 */
-  #rollBtn { touch-action: none; user-select: none; -webkit-user-select: none; }
   #controls label.chk { display: inline-flex; align-items: center; gap: 5px; user-select: none; }
   #controls label.chk input { accent-color: #4f9cf0; margin: 0; }
 
@@ -59,7 +56,7 @@
     font-variant-numeric: tabular-nums; pointer-events: none;
   }
 
-  #progress { position: absolute; left: 0; bottom: 0; height: 3px; background: linear-gradient(90deg, #3d8bfd, #6fd3ff); width: 0%; z-index: 11; pointer-events: none; }
+  #progress { position: absolute; left: 0; bottom: 0; height: 2px; background: linear-gradient(90deg, #3d8bfd, #6fd3ff); width: 0%; z-index: 11; }
 
   #overlay {
     position: absolute; inset: 0; z-index: 20; display: flex;
@@ -124,7 +121,7 @@
 </style>
 </head>
 <body>
-<canvas id="view" title="ドラッグ: 地球を移動 / ダブルクリック: 中心に戻す / R長押し: 回転 / スクロール・ピンチ: 拡大縮小 / 画面下端をドラッグ・Shift+ドラッグ・←→: 早送り巻き戻し / タップ: メニュー"></canvas>
+<canvas id="view"></canvas>
 
 <div id="hud">
   <div class="title">METEOSAT — ヨーロッパ静止気象衛星</div>
@@ -135,8 +132,6 @@
   <select id="satSel" title="衛星">
     <option value="mtg" selected>MTG 0° (欧州・アフリカ)</option>
     <option value="iodc">IODC 41.5°E (トルコ・中東)</option>
-    <option value="goes">GOES-East 75.2°W (南北アメリカ)</option>
-    <option value="himawari">ひまわり 140.7°E (日本)</option>
   </select>
   <select id="layerSel" title="画像の種類"></select>
   <select id="speedSel" title="再生速度 (24時間をこの秒数で)">
@@ -144,22 +139,10 @@
     <option value="30" selected>速度: 標準 (24h→30秒)</option>
     <option value="45">速度: ゆっくり (24h→45秒)</option>
     <option value="60">速度: じっくり (24h→60秒)</option>
-    <option value="86400">速度: 実時間 (自転と等速)</option>
   </select>
   <select id="interpSel" title="フレーム補間方式">
     <option value="motion" selected>補間: モーション (RIFE風)</option>
     <option value="fade">補間: クロスフェード</option>
-  </select>
-  <select id="viewSel" title="画角 (自動=フルとズームを自動で切り替え)">
-    <option value="auto" selected>画角: 自動切り替え</option>
-    <option value="full">画角: フルディスク</option>
-    <option value="north">画角: 北半球</option>
-    <option value="eq">画角: 赤道</option>
-    <option value="south">画角: 南半球</option>
-    <option value="midmoon">画角: 月-地球 中間点から</option>
-    <option value="moon">画角: 月から</option>
-    <option value="mars">画角: 火星から (最接近)</option>
-    <option value="manual">画角: 手動 (ドラッグで移動・スクロールで拡大縮小)</option>
   </select>
   <label class="chk" title="IODCの不自然な緑を肉眼の見た目に近づけます"><input type="checkbox" id="fixChk" checked>色補正</label>
   <button id="bgmBtn" title="地球をスキャンして陰影をアンビエント音楽に変換します">♪ BGM: OFF</button>
@@ -169,8 +152,6 @@
   </select>
   <input id="volRange" type="range" min="0" max="100" value="55" title="BGM音量" style="width:90px;vertical-align:middle">
   <button id="scanBtn" title="スキャン線の表示">スキャン線: ON</button>
-  <button id="starsBtn" title="星空の背景 (衛星の位置と表示時刻から実際の天球を計算)">星空: ON</button>
-  <button id="rollBtn" title="押している間だけ地球と背景が画面中心を軸に高速回転 (Rキー長押し / Shift+R で逆回転)">↻ 回転 (長押し)</button>
   <button id="playBtn" title="再生/一時停止">⏸ 一時停止</button>
   <button id="fsBtn" title="全画面表示">⛶ 全画面</button>
 </div>
@@ -240,39 +221,6 @@ const SATS = {
     },
     defaultLayer: "naturalenh",
   },
-  goes: {
-    label: "GOES-East (75.2°W) — 南北アメリカ", ns: "", lon: -75.2, step: 10 * 60 * 1000,
-    flowScale: 1.0,
-    tint: [1.00, 0.97, 1.06],  // GeoColorは元から演出済みの色なのでごく穏やかな寒色のみ
-    base: "https://gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi",
-    gibs: true,                // NASA GIBS: 時刻一覧はDescribeDomains、欠落時刻は黒画像で返る
-    layers: {
-      geocolor: { id: "GOES-East_ABI_GeoColor", label: "ジオカラー (夜も見える)",
-                  tech: "NOAA GOES-EAST (GOES-19) · ABI · GEOCOLOR (DAY: TRUE COLOR / NIGHT: IR + CITY LIGHTS)" },
-      geodark:  { id: "GOES-East_ABI_GeoColor", label: "自然色 (夜は真っ暗)",
-                  tech: "NOAA GOES-EAST (GOES-19) · ABI · GEOCOLOR (DAY ONLY — NIGHT MASKED BY SOLAR ELEVATION)", nm: true },
-      ir13:     { id: "GOES-East_ABI_Band13_Clean_Infrared", label: "赤外 IR10.3",
-                  tech: "NOAA GOES-EAST (GOES-19) · ABI · BAND 13 CLEAN IR 10.3 µm" },
-    },
-    defaultLayer: "geocolor",
-  },
-  himawari: {
-    label: "ひまわり (140.7°E) — 日本・アジア・オセアニア", ns: "", lon: 140.7, step: 10 * 60 * 1000,
-    flowScale: 1.0,
-    tint: [1.00, 1.00, 1.05],
-    base: "https://gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi",
-    gibs: true,
-    // ディスクが日付変更線をまたぐため、bboxを180°で2分割して取得し貼り合わせる
-    layers: {
-      vis:  { id: "Himawari_AHI_Band3_Red_Visible_1km", label: "可視 白黒 (高精細)",
-              tech: "JMA HIMAWARI-9 · AHI · BAND 3 RED VISIBLE 0.64 µm (1 km)", tw: true, tms: "250m" },
-      ir13: { id: "Himawari_AHI_Band13_Clean_Infrared", label: "赤外 IR10.4 (昼夜)",
-              tech: "JMA HIMAWARI-9 · AHI · BAND 13 CLEAN IR 10.4 µm", tms: "2km" },
-      color: { id: "jma_rep_etc", label: "トゥルーカラー (気象庁・要CORS)", src: "jma",
-               tech: "JMA HIMAWARI-9 · AHI · TRUE COLOR REPRODUCTION IMAGE (気象庁タイル · メルカトル)", tw: true },
-    },
-    defaultLayer: "vis",
-  },
 };
 const WINDOW_MS   = 24 * 60 * 60 * 1000;
 const REFRESH_MS  = 4 * 60 * 1000;
@@ -300,20 +248,10 @@ const satSel   = document.getElementById("satSel");
 const layerSel = document.getElementById("layerSel");
 const speedSel = document.getElementById("speedSel");
 const interpSel= document.getElementById("interpSel");
-const viewSel  = document.getElementById("viewSel");
 const fixChk   = document.getElementById("fixChk");
 const bgmBtn   = document.getElementById("bgmBtn");
 const dirSel   = document.getElementById("dirSel");
 const scanBtn  = document.getElementById("scanBtn");
-const starsBtn = document.getElementById("starsBtn");
-let starsOn = true;
-// グリニッジ平均恒星時 (ラジアン)
-function gmstRad(ms) {
-  const d = ms / 86400000 + 2440587.5 - 2451545.0;
-  let g = (280.46061837 + 360.98564736629 * d) % 360;
-  if (g < 0) g += 360;
-  return g * Math.PI / 180;
-}
 const volRange = document.getElementById("volRange");
 const playBtn  = document.getElementById("playBtn");
 const fsBtn    = document.getElementById("fsBtn");
@@ -367,130 +305,13 @@ const sizeVerified = new Set(); // サーバーが受理した画像サイズ (�
 const STALL_MS        = 10 * 1000;      // 新規フレームがこの時間取得できなければ「停滞」
 const NEAR_NOW_MS     = 45 * 60 * 1000; // 「最新側が揃った」とみなす閾値 (現在から約30分前+余裕)
 
-// 固定画角プリセット (viewSel と対応)
-// z<1 は「引き」の画角: 地球が小さくなり、周囲に星空が広がる。
-// zは静止衛星 (高度42164km) から見た地球視直径に対する、各距離での視直径の比。
-//   月-地球中間点 (約19.2万km): asin(6371/192200)/asin(6371/42164) ≈ 0.22
-//   月から (約38.4万km):        asin(6371/384400)/asin(6371/42164) ≈ 0.11
-const FIXED_VIEWS = {
-  full:  { cx: 0, cy:  0.0, z: 1.0 },    // フルディスク
-  north: { cx: 0, cy:  0.5, z: 2.0 },    // 北半球
-  eq:    { cx: 0, cy:  0.0, z: 2.0 },    // 赤道
-  south: { cx: 0, cy: -0.5, z: 2.0 },    // 南半球
-  midmoon: { cx: 0, cy: 0.0, z: 0.22 },   // 月と地球の中間地点からの視点
-  moon:    { cx: 0, cy: 0.0, z: 0.11 },   // 月からの視点
-  // 火星最接近 (約5460万km): 地球視直径は静止衛星比で約0.0008倍と副画素になるため、
-  // 「ペイル・ブルー・ドット」として視認できる最小サイズ (数px) に留める
-  mars:    { cx: 0, cy: 0.0, z: 0.007 },  // 近地点の火星からの視点
-};
-// 空カメラの垂直半画角tan (画角ごと)。引きの視点ほど広角にして星野を広く見せる
-const SKY_TAN = {
-  auto: 0.30, full: 0.30, north: 0.30, eq: 0.30, south: 0.30,
-  midmoon: 0.42, moon: 0.55, mars: 0.72,
-};
-// --- 手動ズーム (スクロール / ピンチで地球の大きさを自由に変更) ---
-const ZOOM_MIN = 0.007, ZOOM_MAX = 8;   // 火星からの見え方 〜 8倍拡大
-// --- 回転 (R キー / 回転ボタン): 押している間だけ、画面中心を軸に地球と背景を高速に回す ---
-let rollAngle = 0;                      // 現在の回転角 (rad, 反時計回りが正)
-let rollOn = false;                     // 回転中か (R キー / ボタンを押している間だけ true)
-let rollDir = 1;                        // +1: 反時計回り / -1: 時計回り
-let rollSpeed = 0;                      // 現在の角速度 (rad/ms)。開始/停止は滑らかに加減速
-let rollLast = 0;                       // 回転更新の前回時刻
-const ROLL_SPEED = 2 * Math.PI / 6000;  // 高速: 1周 6 秒 (押している間)
-const ROLL_TAU = 120;                   // 加減速の時定数 (ms): 押した瞬間に軽く立ち上がり、離すと素早く止まる
-function setRolling(on, reverse) {      // 押下開始 / 解放
-  rollOn = !!on;
-  if (on) rollDir = reverse ? -1 : 1;
-  updateRollBtn();
-}
-function updateRollBtn() {
-  const b = document.getElementById("rollBtn");
-  if (b) { b.textContent = rollOn ? (rollDir > 0 ? "↺ 回転中" : "↻ 回転中") : "↻ 回転 (長押し)"; b.classList.toggle("active", rollOn); }
-}
-// 画面座標 (y上向き, 画面中心基準, device px) を回転分だけ戻す: R(-θ)·v
-function unroll(vx, vy) {
-  const c = Math.cos(rollAngle), s = Math.sin(rollAngle);
-  return { x: vx * c + vy * s, y: -vx * s + vy * c };
-}
-let zoomTarget = null;                  // 目標ズーム (tickで滑らかに追従)。null=手動ズーム無し
-let panTarget = null;                   // 目標中心位置 {cx,cy} (ディスク半径=1の座標系)
-function skyTanFor(z) {                 // ズーム量に応じて星空の画角を連続的に変える (引くほど広角)
-  return Math.min(0.75, Math.max(0.16, 0.30 * Math.pow(z, -0.35)));
-}
-function discRadiusPx() { return 0.47 * Math.min(canvas.width, canvas.height); } // z=1 のディスク半径 (device px)
-function dpr() { return canvas.width / Math.max(1, canvas.clientWidth); }
-// 地球が画面外へ消えないよう中心位置を制限 (ディスクの一部が必ず画面内に残る)
-function clampPan(cx, cy, z) {
-  // 地球中心の画面位置 S = -z·r·R(θ)·c を画面矩形 (+余白) に収め、c に戻す
-  const r = discRadiusPx() * z;
-  const c = Math.cos(rollAngle), sn = Math.sin(rollAngle);
-  let Sx = -r * (cx * c - cy * sn), Sy = -r * (cx * sn + cy * c);
-  const lx = canvas.width / 2 + 0.6 * r, ly = canvas.height / 2 + 0.6 * r;
-  Sx = Math.max(-lx, Math.min(lx, Sx)); Sy = Math.max(-ly, Math.min(ly, Sy));
-  const u = unroll(Sx, Sy);
-  return { cx: -u.x / r, cy: -u.y / r };
-}
-function enterManual() { if (viewSel && viewSel.value !== "manual") viewSel.value = "manual"; }
-function setManualZoom(z, px, py) {
-  const z1 = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z));
-  // カーソル位置 (px,py: CSS px) を基準に拡大縮小: その点の直下の地球が動かないよう中心を補正
-  if (px !== undefined && py !== undefined) {
-    const z0 = zoomTarget ?? curView.z;
-    const c0 = panTarget ?? { cx: curView.cx, cy: curView.cy };
-    const r = discRadiusPx();
-    // 画面点 P (y上向き・中心基準) のディスク座標 u = R(-θ)P/(z r) + c。u を固定して z を変える:
-    //   c1 = c0 + R(-θ)P · (1/(z0 r) - 1/(z1 r))
-    const P = unroll(px * dpr() - canvas.width / 2, -(py * dpr() - canvas.height / 2));
-    const k = 1 / (z0 * r) - 1 / (z1 * r);
-    panTarget = clampPan(c0.cx + P.x * k, c0.cy + P.y * k, z1);
-  }
-  zoomTarget = z1;
-  enterManual();
-  updateZoomLabel();
-}
-// 表示位置を画面中心へ戻す (拡大率は維持)。tick の追従で滑らかに移動する
-function recenterView() {
-  if (zoomTarget === null) zoomTarget = curView.z;
-  panTarget = { cx: 0, cy: 0 };
-  enterManual();
-  updateZoomLabel();
-}
-// ドラッグによる移動: 即応性のため現在値と目標値を同時に更新
-function panBy(dxCss, dyCss) {
-  const z = curView.z, r = discRadiusPx() * z;
-  // 画面移動量 Δ (y上向き) → c' = c - R(-θ)Δ/(z r)  (回転していてもドラッグ方向どおりに動く)
-  const D = unroll(dxCss * dpr(), -dyCss * dpr());
-  const c = clampPan(curView.cx - D.x / r, curView.cy - D.y / r, z);
-  curView = { ...curView, cx: c.cx, cy: c.cy };
-  panTarget = { ...c };
-  if (zoomTarget === null) zoomTarget = z;
-  enterManual();
-  updateZoomLabel();
-}
-function updateZoomLabel() {
-  const opt = viewSel && viewSel.querySelector('option[value="manual"]');
-  if (!opt) return;
-  const z = zoomTarget ?? curView.z;
-  opt.textContent = `画角: 手動 (×${z >= 1 ? z.toFixed(2) : z.toFixed(3)})`;
-}
 function cutSwitchView() {
-  // 画角セレクタが「自動」以外なら固定 (カット切り替えしない)
-  if (viewSel && viewSel.value === "manual") return;   // 手動ズーム中は画角を変えない
-  if (viewSel && viewSel.value !== "auto") { curView = { ...FIXED_VIEWS[viewSel.value] }; return; }
   if (curView.z !== 1) { curView = { ...FULL_VIEW }; return; }
   let idx;
   do { idx = Math.floor(Math.random() * ZOOM_VIEWS.length); }
   while (ZOOM_VIEWS.length > 1 && idx === lastZoomIdx);
   lastZoomIdx = idx;
   curView = { ...ZOOM_VIEWS[idx] };
-}
-// 画角セレクタの選択を即座に反映
-function applyViewMode() {
-  if (!viewSel) return;
-  if (viewSel.value === "manual") { zoomTarget = curView.z; panTarget = { cx: curView.cx, cy: curView.cy }; updateZoomLabel(); return; } // 現在の画角から手動開始
-  zoomTarget = null; panTarget = null;
-  if (viewSel.value === "auto") { curView = { ...FULL_VIEW }; lastZoomIdx = -1; }
-  else curView = { ...FIXED_VIEWS[viewSel.value] };
 }
 
 const sat      = () => SATS[satSel.value];
@@ -536,198 +357,29 @@ function fmtAgo(ms) {
   return `${Math.floor(m / 60)}時間${m % 60}分前`;
 }
 
-function wmsParams(base, layer, bbox, w, h, t) {
+function wmsUrlFor(satKey, layer, t, size) {
+  const c = SATS[satKey].lon;
   const p = new URLSearchParams({
     service: "WMS", version: "1.1.1", request: "GetMap",
     layers: layer, styles: "",
     srs: "EPSG:4326",
-    bbox,
-    width: String(w), height: String(h),
+    bbox: `${c - BBOX_DEG},${-BBOX_DEG},${c + BBOX_DEG},${BBOX_DEG}`,
+    width: String(size), height: String(size),
     format: "image/jpeg", transparent: "false", bgcolor: "0x000000",
     time: isoTime(t),
   });
-  return `${base}?${p.toString()}`;
-}
-// 論理URL: フレームの一意なキー。日付変更線をまたぐ衛星ではbboxが180°を超えるが、
-// その場合このURLは直接fetchされず、wrapParts()の2分割リクエストに展開される
-function wmsUrlFor(satKey, layer, t, size) {
-  const S = SATS[satKey];
-  const c = S.lon;
-  const bbox = `${+(c - BBOX_DEG).toFixed(2)},${-BBOX_DEG},${+(c + BBOX_DEG).toFixed(2)},${BBOX_DEG}`;
-  return wmsParams(S.base || WMS_BASE, layer, bbox, size, size, t);
-}
-const satWraps = (satKey) => Math.abs(SATS[satKey].lon) + BBOX_DEG > 180;
-// 日付変更線またぎの2分割リクエスト (西側 …→180° / 東側 -180°→…)
-function wrapParts(satKey, layer, t, size) {
-  const S = SATS[satKey];
-  const w = +(S.lon - BBOX_DEG).toFixed(2);
-  const e = +(S.lon + BBOX_DEG - 360).toFixed(2);
-  const px1 = Math.round(size * (180 - w) / (2 * BBOX_DEG));
-  const base = S.base || WMS_BASE;
-  return [
-    { url: wmsParams(base, layer, `${w},${-BBOX_DEG},180,${BBOX_DEG}`, px1, size, t), px: px1 },
-    { url: wmsParams(base, layer, `-180,${-BBOX_DEG},${e},${BBOX_DEG}`, size - px1, size, t), px: size - px1 },
-  ];
-}
-// 実際にfetchできるプローブ用URL (またぎ衛星は西側半分、JMAレイヤーは中央タイルで代表)
-function probeUrlFor(satKey, layer, t, size) {
-  const ld = Object.values(SATS[satKey].layers).find((l) => l.id === layer);
-  if (ld && ld.src === "jma") {
-    const cx = Math.floor(((SATS[satKey].lon + 180) / 360) * JMA_N);  // 直下点付近のタイル
-    return jmaTile(t, cx, Math.floor(JMA_N / 2));
-  }
-  return satWraps(satKey) ? wrapParts(satKey, layer, t, size)[0].url : wmsUrlFor(satKey, layer, t, size);
+  return `${WMS_BASE}?${p.toString()}`;
 }
 const wmsUrl = (t, size) => wmsUrlFor(satSel.value, layerId(), t, size);
-const layerTms = () => (sat().layers[layerSel.value] || sat().layers[sat().defaultLayer]).tms || "2km";
-const capsUrl = () => sat().gibs
-  ? `https://gibs.earthdata.nasa.gov/wmts/epsg4326/best/1.0.0/${layerId()}/default/${layerTms()}/all/all.xml?_=${Date.now()}`
-  : `${WMS_BASE}?service=WMS&version=1.3.0&request=GetCapabilities&namespace=${sat().ns}&_=${Date.now()}`;
-
-// ---- 気象庁 (JMA) ひまわりタイル: トゥルーカラー再現画像 (Webメルカトル) ----
-const JMA_BASE = "https://www.jma.go.jp/bosai/himawari/data/satimg";
-const JMA_Z = 3, JMA_N = 8, JMA_T = 256;           // ズーム3: 1フレーム約25タイル (高速・確実に読み込み)
-const jmaTs = (ms) => {
-  const d = new Date(ms);
-  const p = (n) => String(n).padStart(2, "0");
-  return `${d.getUTCFullYear()}${p(d.getUTCMonth() + 1)}${p(d.getUTCDate())}${p(d.getUTCHours())}${p(d.getUTCMinutes())}00`;
-};
-const jmaTile = (t, x, y) => `${JMA_BASE}/${jmaTs(t)}/fd/${jmaTs(t)}/REP/ETC/${JMA_Z}/${x}/${y}.jpg?v=1`;
-const mercYr = (latDeg) => Math.log(Math.tan(Math.PI / 4 + latDeg * Math.PI / 360));
-const layerDefById = (satKey, layer) =>
-  Object.values(SATS[satKey].layers).find((l) => l.id === layer);
-
-// 1時刻ぶんのJMAタイル群 (経度59.2°〜222.2° × 緯度±81.5°) を取得し、
-// メルカトル図法のまま1枚に貼り合わせる (縦の投影変換はシェーダー側で行う)
-async function jmaStitch(t, size) {
-  const world = JMA_N * JMA_T;
-  const x0 = (SATS.himawari.lon - BBOX_DEG + 180) / 360 * world;
-  const spanX = (2 * BBOX_DEG) / 360 * world;
-  const yTop = (1 - mercYr(BBOX_DEG) / Math.PI) / 2 * world;
-  const yBot = (1 - mercYr(-BBOX_DEG) / Math.PI) / 2 * world;
-  const tx0 = Math.floor(x0 / JMA_T), tx1 = Math.floor((x0 + spanX - 1) / JMA_T);
-  const ty0 = Math.max(0, Math.floor(yTop / JMA_T));
-  const ty1 = Math.min(JMA_N - 1, Math.floor((yBot - 1) / JMA_T));
-  const jobs = [];
-  for (let tx = tx0; tx <= tx1; tx++)
-    for (let ty = ty0; ty <= ty1; ty++) {
-      // ディスク円の完全に外側のタイル (四隅の黒) は取得をスキップして高速化
-      const yn = (ty + 0.5) * JMA_T / world;
-      const tLat = Math.atan(Math.sinh(Math.PI * (1 - 2 * yn))) * 180 / Math.PI;
-      const tLon = ((tx + 0.5) * JMA_T / world) * 360 - 180;
-      const cosc = Math.cos(tLat * Math.PI / 180) *
-                   Math.cos((tLon - SATS.himawari.lon) * Math.PI / 180);
-      if (cosc < 0.02) continue;   // 視円盤の縁 (約89°) より外
-      jobs.push({ tx, ty, x: ((tx % JMA_N) + JMA_N) % JMA_N, i: jobs.length });
-    }
-  const got = new Array(jobs.length);
-  let idx = 0, absent = false, failed = false;
-  const worker = async () => {
-    while (idx < jobs.length && !absent && !failed) {
-      const j = jobs[idx++];
-      try {
-        const res = await fetch(jmaTile(t, j.x, j.ty), { signal: AbortSignal.timeout(30000) });
-        const ct = res.headers.get("content-type") || "";
-        if (res.status === 404 || (res.ok && !ct.startsWith("image"))) { absent = true; return; }
-        if (!res.ok) { failed = true; return; }
-        got[j.i] = await createImageBitmap(await res.blob());
-      } catch (e) { failed = true; return; }
-    }
-  };
-  await Promise.all(Array.from({ length: 8 }, worker));
-  if (absent || failed) {
-    for (const bm of got) if (bm) bm.close();
-    const er = new Error(absent ? "absent" : "transient");
-    er.kind = absent ? "absent" : "transient";
-    throw er;
-  }
-  // 継ぎ目対策: タイルは「等倍・整数座標」で一旦ネイティブ解像度のキャンバスに
-  // 貼り合わせる (端数スケールで1枚ずつ描くとタイル境界にサブピクセルの
-  // 隙間=線が生じる)。縮小は最後に全体を1回だけ行うので境界が完全に連続になる
-  const ox = Math.floor(x0), oy = Math.floor(yTop);
-  const natW = Math.ceil(x0 + spanX) - ox, natH = Math.ceil(yBot) - oy;
-  const nc = new OffscreenCanvas(natW, natH);
-  const nctx = nc.getContext("2d");
-  nctx.fillStyle = "#000"; nctx.fillRect(0, 0, natW, natH);
-  for (const j of jobs) {
-    const bm = got[j.i];
-    if (!bm) continue;
-    nctx.drawImage(bm, j.tx * JMA_T - ox, j.ty * JMA_T - oy);   // 無スケール・整数座標
-    bm.close();
-  }
-  const outSize = Math.min(size, 1856);   // 元データ解像度に合わせる (無駄な拡大をしない)
-  const oc = new OffscreenCanvas(outSize, outSize);
-  const octx = oc.getContext("2d");
-  octx.imageSmoothingEnabled = true;
-  octx.imageSmoothingQuality = "high";
-  octx.fillStyle = "#000"; octx.fillRect(0, 0, outSize, outSize);
-  octx.drawImage(nc, x0 - ox, yTop - oy, spanX, yBot - yTop, 0, 0, outSize, outSize);
-  return oc.convertToBlob({ type: "image/jpeg", quality: 0.85 });
-}
-
-// フレーム1枚ぶんのBlobを取得する共通経路。またぎ衛星は2分割で取得して貼り合わせる。
-// 失敗時は Error.kind = "absent" (データ無し) / "transient" (一時的) を添えて投げる
-async function fetchFrameBlobFor(satKey, layer, t, size) {
-  const ld = layerDefById(satKey, layer);
-  if (ld && ld.src === "jma") return jmaStitch(t, size);
-  const fetchOne = async (url) => {
-    let res;
-    try {
-      res = await fetch(url, { signal: AbortSignal.timeout(60000) });
-    } catch (e) { const er = new Error("network"); er.kind = "transient"; throw er; }
-    const ct = res.headers.get("content-type") || "";
-    if (res.status === 404 || (res.ok && !ct.startsWith("image"))) {
-      const er = new Error("absent"); er.kind = "absent"; throw er;
-    }
-    if (!res.ok) { const er = new Error("http " + res.status); er.kind = "transient"; throw er; }
-    return res.blob();
-  };
-  if (!satWraps(satKey)) return fetchOne(wmsUrlFor(satKey, layer, t, size));
-  const parts = wrapParts(satKey, layer, t, size);
-  const blobs = await Promise.all(parts.map((p) => fetchOne(p.url)));
-  const bms = await Promise.all(blobs.map((b) => createImageBitmap(b)));
-  const oc = new OffscreenCanvas(size, size);
-  const octx = oc.getContext("2d");
-  octx.drawImage(bms[0], 0, 0, parts[0].px, size);
-  octx.drawImage(bms[1], parts[0].px, 0, parts[1].px, size);
-  for (const bm of bms) bm.close();
-  return oc.convertToBlob({ type: "image/jpeg", quality: 0.92 });
-}
+const capsUrl = () =>
+  `${WMS_BASE}?service=WMS&version=1.3.0&request=GetCapabilities&namespace=${sat().ns}&_=${Date.now()}`;
 
 // ---------------- 最新時刻の検出 ----------------
 async function latestFromCaps(session) {
-  const lyr = sat().layers[layerSel.value] || sat().layers[sat().defaultLayer];
-  if (lyr.src === "jma") {
-    // 気象庁の時刻カタログ (targetTimes) から最新のvalidtimeを取る
-    const res = await fetch(`${JMA_BASE}/targetTimes_fd.json?_=${Date.now()}`,
-      { signal: AbortSignal.timeout(20000) });
-    if (!res.ok) throw new Error(`jma times HTTP ${res.status}`);
-    const arr = await res.json();
-    if (session !== SESSION) throw new Error("stale");
-    let max = 0;
-    for (const e of arr) {
-      const s = String(e.validtime || e.basetime || "");
-      if (s.length < 12) continue;
-      const v = Date.parse(`${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}T${s.slice(8, 10)}:${s.slice(10, 12)}:00Z`);
-      if (v > max) max = v;
-    }
-    if (!max) throw new Error("no jma times");
-    return floorSlot(max);
-  }
   const res = await fetch(capsUrl(), { signal: AbortSignal.timeout(20000) });
   if (!res.ok) throw new Error(`caps HTTP ${res.status}`);
   const xml = await res.text();
   if (session !== SESSION) throw new Error("stale");
-  if (sat().gibs) {
-    // GIBS DescribeDomains: 文書全体から最新のタイムスタンプを拾う
-    let max = 0;
-    for (const m of xml.matchAll(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?Z/g)) {
-      const v = Date.parse(m[0]);
-      if (v > max) max = v;
-    }
-    if (!max) throw new Error("no timestamps in domains");
-    return floorSlot(max);
-  }
   const doc = new DOMParser().parseFromString(xml, "text/xml");
   const target = layerId();
   let dimText = null;
@@ -760,7 +412,7 @@ function probeImage(t, session, size = 128) {
     const done = (ok) => { img.onload = img.onerror = null; resolve(ok && session === SESSION); };
     img.onload = () => done(true);
     img.onerror = () => done(false);
-    img.src = probeUrlFor(satSel.value, layerId(), t, size) + `&_=${Date.now()}`;
+    img.src = wmsUrl(t, size) + `&_=${Date.now()}`;
     setTimeout(() => done(false), 25000);
   });
 }
@@ -830,25 +482,26 @@ async function loadFrame(f, session) {
   }
   try {
     if (useGL) {
-      let blob;
+      let res;
       try {
-        blob = await fetchFrameBlobFor(satSel.value, layerId(), f.t, activeSize);
-      } catch (e) { failKind = e.kind || "transient"; throw e; }
-      if (session !== SESSION) return;
-      // GIBSは存在しない時刻に「真っ黒な画像」を返すため、黒一色ならデータ欠落と判定
-      if (SATS[satSel.value].gibs) {
-        const blank = await isBlankImage(blob).catch(() => false);
-        if (session !== SESSION) return;
-        if (blank) { failKind = "absent"; throw new Error("blank"); }
+        res = await fetch(url, { signal: AbortSignal.timeout(60000) });
+      } catch (e) { throw new Error("network"); }  // ネットワーク断・タイムアウト → 一時的失敗
+      const ct = res.headers.get("content-type") || "";
+      if (res.status === 404 || (res.ok && !ct.startsWith("image"))) {
+        // サーバーは応答したが画像が無い (WMS ServiceException / 404) = その時刻のデータが存在しない
+        failKind = "absent";
+        throw new Error("absent");
       }
+      if (!res.ok) throw new Error("http " + res.status); // 5xx/429など → 一時的失敗
+      const blob = await res.blob();
+      if (session !== SESSION) return;
       f.blob = blob; f.ok = true;
     } else {
       const img = await new Promise((resolve, reject) => {
         const im = new Image();
         im.onload = () => resolve(im);
         im.onerror = () => reject(new Error("img error"));
-        // 簡易モード: またぎ衛星は西側半分のみ表示 (縮退動作)
-        im.src = satWraps(satSel.value) ? wrapParts(satSel.value, layerId(), f.t, activeSize)[0].url : url;
+        im.src = url;
         setTimeout(() => reject(new Error("timeout")), 90000);
       });
       if (session !== SESSION) return;
@@ -875,23 +528,6 @@ async function loadFrame(f, session) {
       f.nextTry = Date.now() + backoff * (0.75 + Math.random() * 0.5);
     }
   }
-}
-
-// 黒一色 (ほぼ無信号) の画像か判定 — GIBSの欠落時刻対策
-let blankCanv = null, blankCtx2 = null;
-async function isBlankImage(blob) {
-  const bm = await createImageBitmap(blob);
-  if (!blankCanv) {
-    blankCanv = document.createElement("canvas");
-    blankCanv.width = blankCanv.height = 24;
-    blankCtx2 = blankCanv.getContext("2d", { willReadFrequently: true });
-  }
-  blankCtx2.drawImage(bm, 0, 0, 24, 24);
-  bm.close();
-  const d = blankCtx2.getImageData(0, 0, 24, 24).data;
-  let s = 0;
-  for (let i = 0; i < d.length; i += 4) s += d[i] + d[i + 1] + d[i + 2];
-  return s / (d.length / 4) / 3 < 2.0;
 }
 
 function retrySweep() {
@@ -934,45 +570,35 @@ async function prefetchOtherSat() {
   const session = SESSION;
   const activeKey = satSel.value;
   try {
+    const otherKey = activeKey === "mtg" ? "iodc" : "mtg";
+    const S = SATS[otherKey];
+    const layer = S.layers[S.defaultLayer].id;
     const size = activeSize;
-    const wanted = new Map();   // 論理URL (キー) → {satKey, layer, t}
-    // アクティブ以外の全衛星について、直近24時間ぶんの一覧を作る
-    for (const otherKey of Object.keys(SATS)) {
-      if (otherKey === activeKey) continue;
-      const S = SATS[otherKey];
-      const layer = S.layers[S.defaultLayer].id;
-      // 最新スロットを探す
-      let latest = null;
-      let t = Math.floor((Date.now() - MIN_LAG_MS) / S.step) * S.step;
-      for (let i = 0; i < PROBE_BACK; i++, t -= S.step) {
-        if (session !== SESSION) return;
-        if (await probeUrl(probeUrlFor(otherKey, layer, t, 128))) { latest = t; break; }
-      }
+    // 最新スロットを探す
+    let latest = null;
+    let t = Math.floor((Date.now() - MIN_LAG_MS) / S.step) * S.step;
+    for (let i = 0; i < PROBE_BACK; i++, t -= S.step) {
       if (session !== SESSION) return;
-      if (latest === null) continue;
-      const n = Math.round(WINDOW_MS / S.step) + 1;
-      for (let i = 0; i < n; i++) {
-        const tt = latest - i * S.step;
-        wanted.set(wmsUrlFor(otherKey, layer, tt, size), { satKey: otherKey, layer, t: tt });
-      }
+      if (await probeUrl(wmsUrlFor(otherKey, layer, t, 128))) { latest = t; break; }
     }
-    if (!wanted.size) return;
+    if (latest === null || session !== SESSION) return;
+    // 直近24時間ぶんのURL一覧 (新しい順)
+    const n = Math.round(WINDOW_MS / S.step) + 1;
+    const wanted = new Set();
+    for (let i = 0; i < n; i++) wanted.add(wmsUrlFor(otherKey, layer, latest - i * S.step, size));
     // 窓から外れた/条件の変わった古いキャッシュを破棄 (メモリ節約)
     for (const k of urlCache.keys()) if (!wanted.has(k)) urlCache.delete(k);
-    // 未取得分を並列2で取得 (またぎ衛星は共通経路が2分割+貼り合わせを行う)
-    const urls = [...wanted.keys()].filter((u) => !urlCache.has(u));
+    // 未取得分を並列2で取得
+    const urls = [...wanted].filter((u) => !urlCache.has(u));
     let idx = 0;
     const worker = async () => {
       while (idx < urls.length) {
         if (session !== SESSION) return;   // 設定変更・衛星切替で中断
         const u = urls[idx++];
-        const meta = wanted.get(u);
         try {
-          const b = await fetchFrameBlobFor(meta.satKey, meta.layer, meta.t, size);
-          // GIBSの「存在しない時刻=真っ黒画像」はキャッシュしない
-          // (切替時に本経路で取得し直され、正しく欠落判定される)
-          if (SATS[meta.satKey].gibs && await isBlankImage(b).catch(() => false)) continue;
-          urlCache.set(u, b);
+          const res = await fetch(u, { signal: AbortSignal.timeout(60000) });
+          const ct = res.headers.get("content-type") || "";
+          if (res.ok && ct.startsWith("image")) urlCache.set(u, await res.blob());
         } catch (e) { /* 先読みは失敗しても無害 */ }
       }
     };
@@ -1034,41 +660,20 @@ let grayTexA = null, grayTexB = null, grayFBO = null;
 let hpTexA = null, hpTexB = null;
 let flowPing = [], flowFBO = [], flowTexKey = "", flowResult = null;
 let zeroFlowTex = null;
-let starTex = null;
-let progComp = null, locComp = {}, snapTex = null;   // クロスフェード合成
-// 時間ジャンプのフェード状態
-let fadeActive = false, fadeAlpha = 0;
-const FADE_MS = 500;
-
-// 実在の明るい恒星カタログ (PyEphem同梱データ由来: J2000単位ベクトル, 実視等級, スペクトル型による色)
-const BRIGHT_STARS=[[-0.18746,0.93922,-0.28763,-1.44,0.79,0.84,1.0],[-0.06322,0.60274,-0.79543,-0.62,0.97,0.97,1.0],[-0.78379,-0.52699,0.32858,-0.05,1.0,0.86,0.71],[-0.37386,-0.31262,-0.87321,-0.01,1.0,0.96,0.92],[0.1251,-0.76941,0.62638,0.03,0.79,0.84,1.0],[0.1305,0.68232,0.71932,0.08,1.0,0.76,0.56],[0.19505,0.97036,-0.14266,0.18,0.67,0.75,1.0],[-0.41811,0.90382,0.09107,0.4,0.97,0.97,1.0],[0.49272,0.2238,-0.84091,0.45,0.67,0.75,1.0],[0.02089,0.99144,0.12892,0.45,1.0,0.76,0.56],[-0.42394,-0.25428,-0.86926,0.61,0.67,0.75,1.0],[-0.42394,-0.25428,-0.86926,0.61,0.67,0.75,1.0],[0.45922,-0.87484,0.15416,0.76,0.79,0.84,1.0],[-0.44941,-0.05239,-0.89179,0.77,0.67,0.75,1.0],[0.3439,0.89497,0.28417,0.87,1.0,0.86,0.71],[-0.91408,-0.35635,-0.19357,0.98,0.67,0.75,1.0],[-0.34482,-0.82641,-0.44514,1.06,1.0,0.76,0.56],[-0.39151,0.79116,0.46988,1.16,1.0,0.86,0.71],[0.83733,-0.23359,-0.49428,1.17,0.79,0.84,1.0],[0.83733,-0.23359,-0.49428,1.17,0.79,0.84,1.0],[0.45565,-0.53618,0.71056,1.25,0.79,0.84,1.0],[-0.4938,-0.10433,-0.8633,1.25,0.67,0.75,1.0],[-0.8645,0.45787,0.20735,1.36,0.67,0.75,1.0],[-0.22136,0.84639,-0.48438,1.5,0.67,0.75,1.0],[-0.22136,0.84639,-0.48438,1.5,0.67,0.75,1.0],[-0.3406,0.77777,0.52826,1.58,0.79,0.84,1.0],[-0.53797,-0.07361,-0.83975,1.59,1.0,0.76,0.56],[-0.09164,-0.79226,-0.60326,1.62,0.67,0.75,1.0],[0.15063,0.98238,0.1106,1.64,0.67,0.75,1.0],[0.12866,0.86844,0.47881,1.65,0.67,0.75,1.0],[-0.25882,0.23061,-0.93799,1.67,0.79,0.84,1.0],[0.10358,0.9944,-0.02098,1.69,0.67,0.75,1.0],[0.60293,-0.3198,-0.73089,1.73,0.67,0.75,1.0],[0.08381,0.99591,-0.0339,1.74,0.61,0.69,1.0],[-0.54429,-0.13075,0.82865,1.76,0.79,0.84,1.0],[0.08688,-0.82068,-0.56475,1.79,0.67,0.75,1.0],[0.40498,0.50155,0.76448,1.79,0.97,0.97,1.0],[-0.45911,0.11505,0.8809,1.81,0.97,0.97,1.0],[-0.26336,0.85618,-0.44453,1.83,0.97,0.97,1.0],[-0.58146,-0.2948,0.75829,1.85,0.67,0.75,1.0],[-0.58146,-0.2948,0.75829,1.85,0.67,0.75,1.0],[-0.29557,0.41242,-0.86171,1.86,1.0,0.86,0.71],[0.00146,0.70775,0.70646,1.9,0.79,0.84,1.0],[-0.10961,-0.34072,-0.93375,1.91,1.0,0.86,0.71],[-0.15714,0.94636,0.28233,1.93,0.79,0.84,1.0],[0.32559,-0.44143,-0.83614,1.94,0.67,0.75,1.0],[0.01013,0.0079,0.99992,1.97,0.97,0.97,1.0],[-0.09407,0.94663,-0.30829,1.98,0.67,0.75,1.0],[-0.77793,0.61005,-0.15055,1.99,1.0,0.86,0.71],[-0.85246,0.39763,0.33942,2.01,1.0,0.86,0.71],[0.77968,0.4833,0.39815,2.01,1.0,0.86,0.71],[0.93398,0.17981,-0.30879,2.04,1.0,0.86,0.71],[0.2141,-0.87057,-0.44302,2.05,0.67,0.75,1.0],[-0.68529,-0.42276,-0.593,2.06,1.0,0.86,0.71],[0.87327,0.03197,0.48619,2.07,0.67,0.75,1.0],[-0.20073,-0.18507,0.96201,2.07,1.0,0.86,0.71],[0.77555,0.24353,0.58241,2.07,1.0,0.76,0.56],[0.05264,0.98439,-0.16797,2.07,0.67,0.75,1.0],[0.87327,0.03197,0.48619,2.07,0.67,0.75,1.0],[-0.10654,-0.97024,0.21746,2.08,0.79,0.84,1.0],[0.51465,0.55271,0.65547,2.09,0.67,0.75,1.0],[0.63386,0.38048,0.6734,2.1,0.67,0.75,1.0],[-0.96673,0.04618,0.2516,2.14,0.79,0.84,1.0],[-0.39333,0.65731,-0.64283,2.21,0.61,0.69,1.0],[-0.52917,-0.71964,0.44955,2.22,0.79,0.84,1.0],[-0.53654,-0.20576,0.8184,2.23,0.79,0.84,1.0],[0.44379,-0.62086,0.64621,2.23,0.97,0.97,1.0],[-0.53109,0.49527,-0.6875,2.23,1.0,0.86,0.71],[-0.00922,-0.6226,0.78249,2.24,1.0,0.86,0.71],[-0.00922,-0.6226,0.78249,2.24,1.0,0.86,0.71],[0.5428,0.09695,0.83425,2.24,1.0,0.86,0.71],[0.12184,0.99254,-0.00522,2.25,0.61,0.69,1.0],[0.51238,0.02053,0.85851,2.28,0.97,0.97,1.0],[-0.53592,0.13899,0.83275,2.34,0.79,0.84,1.0],[-0.66948,-0.58706,0.45514,2.35,0.79,0.84,1.0],[0.8172,-0.55025,0.1715,2.38,1.0,0.86,0.71],[0.7347,0.08463,-0.67309,2.4,1.0,0.86,0.71],[-0.59187,0.01594,0.80587,2.41,0.79,0.84,1.0],[-0.20679,-0.9401,-0.27102,2.43,0.79,0.84,1.0],[0.85585,-0.21428,0.47075,2.44,1.0,0.76,0.56],[0.35086,-0.29813,0.8877,2.45,0.79,0.84,1.0],[0.9371,-0.23034,0.26228,2.49,0.67,0.75,1.0],[0.69826,0.71229,0.07132,2.54,1.0,0.76,0.56],[0.11301,0.94528,-0.30607,2.58,0.97,0.97,1.0],[-0.95123,-0.06571,-0.3014,2.58,0.67,0.75,1.0],[-0.95123,-0.06571,-0.3014,2.58,0.67,0.75,1.0],[-0.55472,-0.82448,0.11191,2.63,1.0,0.86,0.71],[0.43956,-0.87913,0.18418,2.72,1.0,0.86,0.71],[-0.70607,-0.65199,-0.27634,2.75,0.79,0.84,1.0],[-0.07182,-0.99423,0.07963,2.76,1.0,0.86,0.71],[-0.19043,-0.94972,0.24853,2.78,1.0,0.76,0.56],[0.12915,0.92612,-0.35445,2.81,1.0,0.96,0.92],[0.96348,0.05571,0.26191,2.83,0.67,0.75,1.0],[0.49887,0.76442,0.40841,2.85,0.67,0.75,1.0],[-0.94585,-0.26309,0.19011,2.85,1.0,0.96,0.92],[0.54333,0.53514,-0.64685,2.88,0.79,0.84,1.0],[0.87835,-0.47798,-0.00558,2.95,1.0,0.96,0.92],[0.49339,0.83786,-0.23359,2.97,1.0,0.76,0.56],[-0.92218,-0.04077,-0.38461,3.02,1.0,0.86,0.71],[0.34058,-0.81497,0.46885,3.05,1.0,0.86,0.71],[0.34058,-0.81497,0.46885,3.05,1.0,0.86,0.71],[0.26285,-0.20414,0.94299,3.23,0.67,0.75,1.0],[0.21408,-0.81393,0.54009,3.25,0.67,0.75,1.0],[-0.54293,-0.0366,0.83898,3.32,0.79,0.84,1.0],[0.18106,-0.81535,0.54994,3.52,0.79,0.84,1.0],[0.49346,0.76836,0.40759,3.62,0.67,0.75,1.0],[-0.37032,-0.22337,0.90165,3.67,0.79,0.84,1.0],[0.47918,-0.8706,0.11159,3.71,1.0,0.96,0.92],[0.5075,0.75864,0.40854,3.72,0.67,0.75,1.0],[0.50334,0.75922,0.41259,3.87,0.67,0.75,1.0],[0.25182,-0.66785,-0.7004,3.96,0.67,0.75,1.0],[0.27168,-0.70881,-0.65099,3.96,0.67,0.75,1.0],[-0.53453,-0.20847,0.81903,3.99,0.79,0.84,1.0],[0.50334,0.76282,0.40591,4.14,0.67,0.75,1.0],[0.25203,-0.66331,-0.70463,4.27,0.97,0.97,1.0],[0.50499,0.75726,0.41417,4.3,0.67,0.75,1.0]];
-const STAR_N = BRIGHT_STARS.length;
 
 const VS_QUAD = `#version 300 es
 layout(location=0) in vec2 aPos;
 out vec2 vUv;
 void main() { vUv = aPos * 0.5 + 0.5; gl_Position = vec4(aPos, 0.0, 1.0); }`;
 
-// 時間ジャンプ (欠落跨ぎ・ループ先頭) を滑らかにつなぐためのクロスフェード合成
-const FS_COMP = `#version 300 es
-precision highp float;
-in vec2 vUv;
-uniform sampler2D uTex;
-uniform float uAlpha;
-out vec4 oCol;
-void main() { oCol = vec4(texture(uTex, vUv).rgb, uAlpha); }`;
-
 const VS_GLOBE = `#version 300 es
 layout(location=0) in vec2 aPos;
 uniform vec2 uScale;
 uniform vec3 uView;   // (中心x, 中心y, ズーム倍率) — ディスク半径=1の座標系
-uniform vec2 uRoll;   // 画面回転 (cosθ, sinθ): 画面中心を軸に地球と背景を一緒に回す
 out vec2 vPos;
 out vec2 vUvFull;
 void main() {
-  vec2 p = aPos * uScale;                                   // 画面中心基準・等方 (ディスク半径=1)
-  vec2 q = vec2(p.x * uRoll.x + p.y * uRoll.y, -p.x * uRoll.y + p.y * uRoll.x);  // R(-θ)·p
-  vPos = q / uView.z + uView.xy;
+  vPos = aPos * uScale / uView.z + uView.xy;
   vUvFull = aPos * 0.5 + 0.5;
   gl_Position = vec4(aPos, 0.0, 1.0);
 }`;
@@ -1173,15 +778,8 @@ void main() {
 
 const FS_GLOBE = `#version 300 es
 precision highp float;
-#define STAR_N ${STAR_N}
 in vec2 vPos;
 in vec2 vUvFull;
-uniform sampler2D uStarTex;   // 恒星カタログ (行0: xyz+等級 / 行1: rgb)
-uniform float uSkyTan;        // 空カメラの垂直半画角のtan (歪みのない矩形投影)
-uniform float uAspect;        // 画面アスペクト比 w/h
-uniform vec2 uRoll;           // 画面回転 (cosθ, sinθ) — 地球と同じ回転を背景にも掛ける
-uniform float uStarK;         // 角距離→画素の変換係数 (点像を約1pxに保つ)
-uniform float uStarGain;      // 恒星の明るさ全体係数
 uniform sampler2D uTexA;
 uniform sampler2D uTexB;
 uniform sampler2D uFlow;
@@ -1195,8 +793,6 @@ uniform float uConfRelax; // 信頼度判定の許容度 (フレーム間隔が�
 // フレーム時刻の太陽方向 uSunA/uSunB で「画像に写っている照明」を割り戻し、
 // 補間時刻の太陽方向 uSunI による連続的な照明で照らし直すことで、
 // 空間的にも時間的にも滑らかな昼→夜のグラデーションを合成する。
-uniform float uNm;        // 夜側マスク: 太陽高度に従い夜を真っ暗にする (GeoColorの合成夜景を消す)
-uniform float uSrcMerc;   // ソースがWebメルカトル図法 (気象庁タイル) のとき1
 uniform vec3  uSunA;
 uniform vec3  uSunB;
 uniform vec3  uSunI;
@@ -1317,158 +913,23 @@ vec3 grade(vec3 c) {
   return clamp(c, 0.0, 1.0);
 }
 
-// ============ 星空背景 ============
-// 衛星の位置 (経度) と表示中の時刻から恒星時を計算し、その瞬間に衛星の背後に
-// 実際に見えているはずの天球を手続き的に描く。恒星は天球に固定され、
-// 地球の自転 (=表示時刻の進行) に合わせて滑らかに回転する
-uniform float uStars;     // 星空背景 ON/OFF
-uniform float uCosT;      // 恒星時角 θ = GMST + 衛星経度 の cos/sin
-uniform float uSinT;
-
-float hash13(vec3 p) {
-  p = fract(p * 0.1031);
-  p += dot(p, p.zyx + 31.32);
-  return fract((p.x + p.y) * p.z);
-}
-vec3 hash33(vec3 p) {
-  p = fract(p * vec3(0.1031, 0.1030, 0.0973));
-  p += dot(p, p.yxz + 33.33);
-  return fract((p.xxy + p.yxx) * p.zyx);
-}
-float vnoise3(vec3 p) {
-  vec3 i = floor(p), f = fract(p);
-  f = f * f * (3.0 - 2.0 * f);
-  return mix(
-    mix(mix(hash13(i), hash13(i + vec3(1, 0, 0)), f.x),
-        mix(hash13(i + vec3(0, 1, 0)), hash13(i + vec3(1, 1, 0)), f.x), f.y),
-    mix(mix(hash13(i + vec3(0, 0, 1)), hash13(i + vec3(1, 0, 1)), f.x),
-        mix(hash13(i + vec3(0, 1, 1)), hash13(i + vec3(1, 1, 1)), f.x), f.y), f.z);
-}
-float fbm(vec3 p) {
-  // オクターブごとに座標を回転させ、値ノイズの格子由来の「モザイク」を消す
-  const mat3 M = mat3(0.00, 0.80, 0.60, -0.80, 0.36, -0.48, -0.60, -0.48, 0.64);
-  float v = 0.0, a = 0.5;
-  for (int i = 0; i < 6; i++) { v += a * vnoise3(p); p = M * p * 2.0 + 7.3; a *= 0.5; }
-  return v;
-}
-// 恒星のレイヤー: 方向ベクトル空間の3Dセルに星を1つずつ置く。
-// dens=発光する星の割合 (小さいほど密), bloom>0 で輝星に淡いにじみを足す
-vec3 starLayer(vec3 sc, float scale, float gain, float sharp, float dens, float bloom) {
-  vec3 p = sc * scale;
-  vec3 base = floor(p - 0.5);
-  vec3 col = vec3(0.0);
-  for (int ix = 0; ix < 2; ix++)
-  for (int iy = 0; iy < 2; iy++)
-  for (int iz = 0; iz < 2; iz++) {
-    vec3 c = base + vec3(float(ix), float(iy), float(iz));
-    float h = hash13(c + 7.7);
-    if (h < 1.0 - dens) continue;                     // 大半のセルは空 (密度制御)
-    vec3 rnd = hash33(c);
-    float d = length(p - (c + 0.15 + rnd * 0.7));
-    float hn = (h - (1.0 - dens)) / dens;             // 0..1 に正規化
-    float mag = pow(hn, 4.5) + step(0.985, h) * 0.8;  // 等級分布 + 僅かな輝星
-    // 星の色: 青白 (高温) 〜 橙 (低温) を実際の恒星のように散らす
-    vec3 tint = mix(vec3(1.0, 0.86, 0.72), vec3(0.70, 0.82, 1.0), hash13(c + 3.3));
-    float core = exp(-d * d * sharp);
-    float glow = bloom * pow(hn, 10.0) * exp(-d * d * sharp * 0.28); // 輝星の小さなにじみ (控えめ)
-    col += mag * gain * (core + glow) * tint;
-  }
-  return col;
-}
-vec3 starField(vec3 dir) {
-  // 描画系 → 天球座標 (X=春分点, Z=天の北極) へ恒星時角で変換
-  vec3 sc = normalize(vec3(
-    -dir.x * uSinT + dir.z * uCosT,
-     dir.x * uCosT + dir.z * uSinT,
-     dir.y));
-  // 銀河座標: 天の川の帯は銀河面 (銀河北極 RA192.86° Dec27.13°) に沿う
-  float sinB = dot(sc, vec3(-0.8682, -0.1981, 0.4560));            // 銀緯のsin
-  float toC  = max(dot(sc, vec3(-0.0549, -0.8734, -0.4839)), 0.0); // 銀河中心方向 (いて座)
-  float band  = exp(-pow(sinB / 0.20, 2.0));                       // 広い主帯
-  float core  = exp(-pow(sinB / 0.085, 2.0));                      // 細い明るい芯
-  float bulge = 0.5 + 1.4 * toC * toC * toC;                       // 中心バルジで明るく
-
-  // 天の川の淡い地光 (unresolved light): なめらかな多重オクターブ。輝度は控えめにし、
-  // 見た目の「粒状感」は下の無数の微光星で作る (本物の天の川と同じ構成)
-  float neb = fbm(sc * 5.0);
-  neb = neb * neb;                                                 // コントラストを付けて塊を締める
-  float rift = 1.0 - 0.7 * smoothstep(0.5, 0.9, fbm(sc * 8.0 + 20.0))
-                    * exp(-pow(sinB / 0.10, 2.0)) * (0.4 + 0.6 * toC); // 暗黒帯
-  float glowAmt = band * bulge * (0.15 + 0.85 * neb) * rift;
-  vec3 mwCol = mix(vec3(0.55, 0.62, 0.80), vec3(0.85, 0.78, 0.70), toC * 0.5);
-  vec3 mw = mwCol * glowAmt * 0.11;                                // ごく淡い地光 (輝度を大きく抑制)
-  mw += mwCol * core * bulge * rift * 0.06;                        // 芯のうっすらした明るみ
-  mw = max(mw, vec3(0.0));
-
-  // 点光源 (実在恒星カタログ + 微光星の絨毯) を一旦 stars に合算し、最後にトーンマップで
-  // 上限圧縮する。これにより「突出した大きい/明るい白点」が原理的に生じず、全天が均一な
-  // 微細粒の星野になる (大きい星の排除)。
-  vec3 stars = vec3(0.0);
-  // 実在の恒星 (カタログ): 位置・スペクトル色で描く。等級差はごく僅かな輝度差のみで表現し、
-  // 芯は全星共通の極小点。突出させない。
-  for (int i = 0; i < STAR_N; i++) {
-    vec4 sd = texelFetch(uStarTex, ivec2(i, 0), 0);   // xyz, 等級
-    // 【中抜けの丸の根本原因】カタログのベクトルがごく僅かに単位長を超える(最大1.0000064)
-    // ものがあり、巨大な uStarK と相まって中心付近で 1-dt が負になり exp(-pk) が発散、
-    // 広範囲が飽和して平坦な円盤(中抜けに見える丸)になっていた。ベクトルを正規化して
-    // dt<=1 を保証し、pk を 0 以上にクランプして発散を断つ → 全星が極小の点になる。
-    float dt = dot(sc, normalize(sd.xyz));
-    if (dt <= 0.0) continue;
-    float amp = pow(2.512, -sd.w) * uStarGain;         // 等級→強度 (Pogsonの式)
-    float pk = max(0.0, 2.0 * (1.0 - dt) * uStarK * 2.6); // 芯の減衰 (0未満に発散させない)
-    if (pk > 40.0) continue;                            // 近傍画素のみ寄与
-    float lum = 0.70 - 0.44 * exp(-amp * 1.1);          // 等級差はごく僅かな輝度差のみ (点は極小)
-    vec3 scol = texelFetch(uStarTex, ivec2(i, 1), 0).rgb;
-    stars += scol * lum * exp(-pk);                     // 全星共通の極小点
-  }
-  // 微光星の絨毯 = 天の川の粒状感の正体。銀河面へ向かうほど密になり、無数の極小点が
-  // 「ざらついた光の帯」に見える (実際の天の川と同じ)
-  float db = 0.25 + band * 2.4;                                    // 帯で星密度が急増
-  stars += starLayer(sc,          150.0, 0.42, 100.0, min(1.0, 0.35 * db), 0.0);
-  stars += starLayer(sc + 27.3,  300.0, 0.34,  28.0, min(1.0, 0.5 * db),  0.0);
-  stars += starLayer(sc + 51.9,  560.0, 0.26,   9.0, min(1.0, 0.7 * db),  0.0);
-  stars += starLayer(sc + 73.1, 1000.0, 0.18,   3.0, min(1.0, 0.85 * db), 0.0);
-  // トーンマップ (上限 ~0.6): どんなに明るい/重なった点でも突出した白点にならない
-  stars = stars / (1.0 + 1.1 * stars);
-  return mw + stars;
-}
-
 void main() {
   float r = length(vPos);
+  // 背景: 純黒 (星・グローなし)
+  if (r >= 1.0) { oCol = vec4(0.0, 0.0, 0.0, 1.0); return; }
+
   float rho = asin(R / D);
   float tr  = tan(rho);
   vec3 dir  = normalize(vec3(vPos.x * tr, vPos.y * tr, -1.0));
   float bq  = D * dir.z;
   float disc = bq * bq - (D * D - R * R);
-  // 背景: 星空ON時は実際の天球、OFF時は純黒
-  if (r >= 1.0 || disc < 0.0) {
-    vec3 bg = vec3(0.0);
-    if (uStars > 0.5) {
-      // 歪みのない矩形カメラ (ディスクの投影とは独立) で空を張る。
-      // 画角(uSkyTan)を制御することで、広角でも自然な星野になる (以前の歪み解消)
-      vec2 ndc = vUvFull * 2.0 - 1.0;
-      vec2 sp = vec2(ndc.x * uAspect, ndc.y);                 // 等方な画面座標
-      vec2 sq = vec2(sp.x * uRoll.x + sp.y * uRoll.y, -sp.x * uRoll.y + sp.y * uRoll.x);  // 地球と同じ回転
-      vec3 skyDir = normalize(vec3(sq.x * uSkyTan, sq.y * uSkyTan, -1.0));
-      bg = starField(skyDir);
-      float rr = length(ndc);
-      bg *= 1.0 - 0.28 * smoothstep(0.75, 1.5, rr);  // 周辺減光 (写真のような四隅の暗さ)
-      bg += vec3(0.012, 0.016, 0.030);               // ごく淡い夜天光のベース
-    }
-    oCol = vec4(bg, 1.0);
-    return;
-  }
+  if (disc < 0.0) { oCol = vec4(0.0, 0.0, 0.0, 1.0); return; }
   float t = -bq - sqrt(disc);
   vec3 P = vec3(t * dir.x, t * dir.y, D + t * dir.z);
 
   float lat = degrees(asin(clamp(P.y / R, -1.0, 1.0)));
   float lon = degrees(atan(P.x, P.z));
   vec2 uv = vec2((lon + BB) / (2.0 * BB), (BB - lat) / (2.0 * BB));
-  if (uSrcMerc > 0.5) {
-    // メルカトルソース: 縦方向のみ非線形 (±81.5°のメルカトルY = ±2.599478)
-    float m = log(tan(radians(45.0 + lat * 0.5)));
-    uv.y = (2.599478 - m) / (2.0 * 2.599478);
-  }
 
   vec3 col = sampleBlend(uv);
 
@@ -1493,14 +954,6 @@ void main() {
     float gain = min(1.0 / max(illS, 0.02), 3.5);
     float illT = pow(clamp(sinE, 0.0, 1.0), 0.7) * smoothstep(0.02, 0.30, sinE);
     col *= min(gain * illT, 1.0);
-  }
-
-  if (uNm > 0.5) {
-    // 夜側マスク: 実際の太陽高度に従って夜側をなだらかに暗転させ、
-    // 昼→夜が自然な薄明のグラデーションで真っ暗に落ちるようにする
-    vec3 un = P / R;
-    float sinE = dot(un, uSunI);
-    col *= smoothstep(-0.12, 0.10, sinE);
   }
 
   if (uFix > 0.5) col = iodcFix(col);
@@ -1557,9 +1010,7 @@ function initGL() {
   // 再実行可能にするため、GLリソース参照をリセット
   flowPing = []; flowFBO = []; texPool = [];
   canFlow = false; flowTexKey = ""; flowResult = null;
-  // preserveDrawingBuffer: 直前フレームを保持し、時間ジャンプ時のクロスフェード用に
-  // 前の画面を正しくスナップショットできるようにする (毎フレーム全画素を描くので残像はない)
-  gl = canvas.getContext("webgl2", { antialias: true, alpha: false, preserveDrawingBuffer: true });
+  gl = canvas.getContext("webgl2", { antialias: true, alpha: false });
   if (!gl) return "none";
   try {
     progGlobe    = compileProgram(VS_GLOBE, FS_GLOBE);
@@ -1567,7 +1018,6 @@ function initGL() {
     progHP       = compileProgram(VS_QUAD, FS_HIGHPASS);
     progFlow     = compileProgram(VS_QUAD, FS_FLOW);
     progFlowPost = compileProgram(VS_QUAD, FS_FLOW_POST);
-    progComp     = compileProgram(VS_QUAD, FS_COMP);
 
     quadVAO = gl.createVertexArray();
     gl.bindVertexArray(quadVAO);
@@ -1578,12 +1028,11 @@ function initGL() {
     gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
 
     const uni = (p, names) => { const o = {}; for (const n of names) o[n] = gl.getUniformLocation(p, n); return o; };
-    locGlobe = uni(progGlobe, ["uScale","uTexA","uTexB","uFlow","uMix","uFlowOn","uFix","uPx","uView","uConfRelax","uSunA","uSunB","uSunI","uTw","uNm","uSrcMerc","uStars","uCosT","uSinT","uStarTex","uSkyTan","uAspect","uStarK","uStarGain","uTint","uTexel","uSharp","uScanLon","uScanShow","uRoll"]);
+    locGlobe = uni(progGlobe, ["uScale","uTexA","uTexB","uFlow","uMix","uFlowOn","uFix","uPx","uView","uConfRelax","uSunA","uSunB","uSunI","uTw","uTint","uTexel","uSharp","uScanLon","uScanShow"]);
     locGray  = uni(progGray,  ["uSrc"]);
     locFlow  = uni(progFlow,  ["uGrayA","uGrayB","uPrev","uLod","uFlowTexel","uFirst","uMaxFlow"]);
     locFlowPost = uni(progFlowPost, ["uPrev","uGrayA","uGrayB","uFlowTexel","uGate"]);
     locHP = uni(progHP, ["uGray"]);
-    locComp = uni(progComp, ["uTex", "uAlpha"]);
 
     // フロー用リソース (floatレンダリング対応をチェック)
     canFlow = !!gl.getExtension("EXT_color_buffer_float");
@@ -1609,32 +1058,6 @@ function initGL() {
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0,0,0,255]));
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-
-    // 恒星カタログのデータテクスチャ (幅=星数, 高さ2: 行0=xyz+等級, 行1=rgb)
-    starTex = gl.createTexture();
-    gl.bindTexture(gl.TEXTURE_2D, starTex);
-    const sd = new Float32Array(STAR_N * 2 * 4);
-    for (let i = 0; i < STAR_N; i++) {
-      const b = BRIGHT_STARS[i];
-      sd[i * 4 + 0] = b[0]; sd[i * 4 + 1] = b[1]; sd[i * 4 + 2] = b[2]; sd[i * 4 + 3] = b[3]; // xyz, mag
-      const o = (STAR_N + i) * 4;
-      sd[o + 0] = b[4]; sd[o + 1] = b[5]; sd[o + 2] = b[6]; sd[o + 3] = 1.0;                 // rgb
-    }
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, STAR_N, 2, 0, gl.RGBA, gl.FLOAT, sd);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-
-    // クロスフェード用スナップショット (ジャンプ直前の画面をコピーして重ねる)
-    snapTex = gl.createTexture();
-    gl.bindTexture(gl.TEXTURE_2D, snapTex);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 0, 255]));
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    fadeActive = false; fadeAlpha = 0;
 
     // フレームテクスチャプール
     texPool = [{ tex: null, key: 0 }, { tex: null, key: 0 }, { tex: null, key: 0 }];
@@ -1794,8 +1217,6 @@ function sunDirAt(tMs) {
   return [Math.cos(decl) * Math.sin(dl), Math.sin(decl), Math.cos(decl) * Math.cos(dl)];
 }
 const layerTw = () => !!(sat().layers[layerSel.value] || sat().layers[sat().defaultLayer]).tw;
-const layerNm = () => !!(sat().layers[layerSel.value] || sat().layers[sat().defaultLayer]).nm;
-const layerSrc = () => (sat().layers[layerSel.value] || sat().layers[sat().defaultLayer]).src || "";
 
 // =========================================================================
 //  BGM: 地球スキャン・ソニフィケーション
@@ -1856,7 +1277,7 @@ function sampleColumn(lonDeg) {
   if (!anaData) {
     const t = performance.now() / 1000;
     for (let i = 0; i < N_BANDS; i++) bands[i] = 0.25 + 0.2 * Math.sin(t * 0.1 + i * 1.7);
-    return { bands, bandType, mean: 0.3, contrast: 0.15, vals: [],
+    return { bands, bandType, mean: 0.3, contrast: 0.15,
              cloudFrac: 0, desertFrac: 0, forestFrac: 0, oceanFrac: 0.3, oceanBright: 0.2 };
   }
   const x = Math.max(0, Math.min(95, Math.round((lonDeg + BBOX_DEG) / (2 * BBOX_DEG) * 95)));
@@ -1901,7 +1322,7 @@ function sampleColumn(lonDeg) {
     if (bc >= n * 0.35) bandType[b] = best;
   }
   return {
-    bands, bandType, mean, contrast, vals,
+    bands, bandType, mean, contrast,
     cloudFrac: nCloud / N, desertFrac: nDesert / N, forestFrac: nForest / N,
     oceanFrac: nOcean / N, oceanBright: nOcean ? oceanSum / nOcean : 0,
   };
@@ -1925,9 +1346,9 @@ function startBgm() {
   filter.type = "lowpass"; filter.frequency.value = 2200; filter.Q.value = 0.5;
   // 残響: 壮大さと包容力のための広い空間。ただし原音優位のバランスを保ち、
   // 変化を塗りつぶす「ぼわーん」にはしない
-  const dry = ctx.createGain(); dry.gain.value = 0.68;
-  const conv = ctx.createConvolver(); conv.buffer = makeImpulse(ctx, 2.6);
-  const wet = ctx.createGain(); wet.gain.value = 0.44;
+  const dry = ctx.createGain(); dry.gain.value = 0.72;
+  const conv = ctx.createConvolver(); conv.buffer = makeImpulse(ctx, 2.2);
+  const wet = ctx.createGain(); wet.gain.value = 0.38;
 
   const sum = ctx.createGain();
   sum.connect(filter);
@@ -1937,24 +1358,26 @@ function startBgm() {
   tail.connect(dry); dry.connect(ctx.destination);
   tail.connect(conv); conv.connect(wet); wet.connect(ctx.destination);
 
-  // === オルゴールの子守唄エンジン ===
-  // 土台: 画面の地表に合わせて和音が移ろう柔らかなパッドと深いベース。
-  // 和音はルート+5度+オクターブの開いた響き (パワーコード) だけを使うので、
-  // ペンタトニックの旋律と原理的に濁らない。音色はサイン波のみで刺激ゼロ
-  const padG = ctx.createGain(); padG.gain.value = 0;
-  const padOs = [];
-  const padW = [1.0, 0.72, 0.5];
-  for (let i = 0; i < 3; i++) {
-    const o = ctx.createOscillator(); o.type = "sine"; o.frequency.value = [110, 164.81, 220][i];
-    const og = ctx.createGain(); og.gain.value = padW[i];
-    o.connect(og); og.connect(padG); o.start();
-    padOs.push(o);
+  // 海 = 深く温かい低音のパッド (A2 + E3 + A3)。ノイズは一切使わない。
+  // わずかにデチューンした2本のオシレーターのゆっくりした唸りと、波のうねりの
+  // LFOによる満ち引きで、寄せては返す海の呼吸を音程のある音だけで描く。
+  // 音量は海の割合にリニアに比例するので、陸の多い経度でははっきり引く
+  const droneFreqs = [110, 164.81, 220];
+  const droneW = [1.0, 0.7, 0.5];
+  const seaBus = ctx.createGain(); seaBus.gain.value = 1.0;
+  seaBus.connect(sum);
+  const bandsG = [];
+  for (let i = 0; i < droneFreqs.length; i++) {
+    const g = ctx.createGain(); g.gain.value = 0;
+    const o1 = ctx.createOscillator(); o1.type = "sine"; o1.frequency.value = droneFreqs[i];
+    const o2 = ctx.createOscillator(); o2.type = "triangle"; o2.frequency.value = droneFreqs[i] * 1.0015;
+    const g2 = ctx.createGain(); g2.gain.value = 0.25;
+    o1.connect(g); o2.connect(g2); g2.connect(g);
+    g.connect(seaBus);
+    o1.start(); o2.start();
+    g._w = droneW[i];
+    bandsG.push(g);
   }
-  padG.connect(sum);
-  const bassO = ctx.createOscillator(); bassO.type = "sine"; bassO.frequency.value = 110;
-  const bassG = ctx.createGain(); bassG.gain.value = 0;
-  bassO.connect(bassG); bassG.connect(sum); bassO.start();
-
   // 砂の打楽器用ノイズバッファ (連続音には使わない — 短い粒だけ)
   const nlen = ctx.sampleRate * 2;
   const nbuf = ctx.createBuffer(1, nlen, ctx.sampleRate);
@@ -1973,6 +1396,17 @@ function startBgm() {
   lo1.connect(landG); lo1b.connect(lo1bg); lo1bg.connect(landG);
   lo2.connect(lo2g); lo2g.connect(landG); landG.connect(sum);
   lo1.start(); lo1b.start(); lo2.start();
+
+  // 雲 = 白い輝きのパッド (ノイズ不使用): A4/E5 の柔らかなきらめきが雲の量に
+  // リニアに比例して満ちる。刺激を避けて1オクターブ低い帯域に置く
+  const co1 = ctx.createOscillator(); co1.type = "sine"; co1.frequency.value = 220;
+  const co1b = ctx.createOscillator(); co1b.type = "sine"; co1b.frequency.value = 220 * 1.0022; // ゆらめき
+  const cloudG = ctx.createGain(); cloudG.gain.value = 0;
+  const co2 = ctx.createOscillator(); co2.type = "sine"; co2.frequency.value = 329.63;
+  const cloudHi = ctx.createGain(); cloudHi.gain.value = 0;
+  co1.connect(cloudG); co1b.connect(cloudG); co2.connect(cloudHi);
+  cloudG.connect(sum); cloudHi.connect(sum);
+  co1.start(); co1b.start(); co2.start();
 
   // 夜 = 静寂の底のベース: 真っ暗な部分では夜の静けさのベースがはっきり聞こえる
   // 音量で息づく。可聴性のため主音はA2 (110Hz)、下にA1のサブ。2Hz (デルタ波帯) の
@@ -1994,19 +1428,36 @@ function startBgm() {
   nlfo.connect(nightSwell); nightSwell.connect(nightG.gain);
   nlfo.start();
 
-  // 嵐の脈動: 渦巻き雲 (低気圧) の上でだけパッドをゆっくり脈打たせるトレモロ。
+  // 全体を底から支える大地の芯 (A1, 55Hz): 鳴っている声部の総量に応じて
+  // いちばん深いところで静かに支える、壮大さと包容力のためのサブベース
+  const sub = ctx.createOscillator(); sub.type = "sine"; sub.frequency.value = 55;
+  const subG = ctx.createGain(); subG.gain.value = 0;
+  sub.connect(subG); subG.connect(sum); sub.start();
+
+  // 嵐の脈動: 渦巻き雲 (低気圧) の上でだけ雲のパッドを速く脈打たせるトレモロ。
   // 深さはスキャン内容 (渦度) のみに比例し、渦がなければ完全に無効
   const slfo = ctx.createOscillator(); slfo.type = "sine"; slfo.frequency.value = 2.3;
   const stormDepth = ctx.createGain(); stormDepth.gain.value = 0;
-  slfo.connect(stormDepth); stormDepth.connect(padG.gain);
+  slfo.connect(stormDepth); stormDepth.connect(cloudG.gain);
   slfo.start();
 
-  audioG = { ctx, master, filter, panner, sum, padG, padOs, bassO, bassG,
-             landG, nightG, nightSwell,
+  // 緯度の和音: スキャン線上の12の緯度バンドそれぞれに五音音階の音を割り当てる
+  // (北の空 = 高い音、南の空 = 低い音)。その経度の明暗の縦プロファイルがそのまま
+  // 和音のボイシングになるので、スキャン位置が変わると鳴る音の組み合わせが変わる
+  const chordG = [];
+  for (let i = 0; i < N_BANDS; i++) {
+    const g = ctx.createGain(); g.gain.value = 0;
+    const o = ctx.createOscillator(); o.type = "triangle";
+    o.frequency.value = 110 * Math.pow(2, SCALE_SEMIS[i] / 12); // 低音重視: 1オクターブ下
+    o.connect(g); g.connect(sum); o.start();
+    chordG.push(g);
+  }
+
+  audioG = { ctx, master, filter, panner, bandsG, sum, seaBus, landG, nightG, nightSwell, subG,
              stormDepth, noiseBuf: nbuf,
-             nextBeat: 0, nextChord: 0, chordName: "",
-             lastStorm: 0, boxCount: 0,
-             pluckCount: 0, shakerCount: 0, rockCount: 0 };
+             cloudG, cloudHi, chordG,
+             nextBeat: 0, lastStorm: 0, arpIdx: 0,
+             pluckCount: 0, shakerCount: 0, rockCount: 0, noteCount: 0 };
   master.gain.setTargetAtTime(bgmVol(), ctx.currentTime, 1.2); // フェードイン (音量スライダー準拠)
 
   bgmTimer = setInterval(bgmUpdate, 90);
@@ -2030,24 +1481,19 @@ function woodPluck(a, freq, vel) {
   a.pluckCount++;
 }
 
-// オルゴールの一音: 澄んだ基音 + すぐに消える控えめな高次部分音。
-// 速い立ち上がりと約2秒の長い余韻が、ポップで懐かしく眠気を誘う響きを作る
-function musicBox(a, freq, vel, delay) {
-  const t = a.ctx.currentTime + (delay || 0);
-  const v = Math.min(0.07, vel);
-  const o1 = a.ctx.createOscillator(); o1.type = "sine"; o1.frequency.value = freq;
-  const o2 = a.ctx.createOscillator(); o2.type = "sine"; o2.frequency.value = freq * 4;
-  const g2 = a.ctx.createGain();
-  g2.gain.setValueAtTime(0.06, t);
-  g2.gain.exponentialRampToValueAtTime(0.001, t + 0.5);
+// 旋律の一音: 柔らかい単音 (soft=サイン波でふわっと / 硬め=トライアングルで軽く)
+function noteHit(a, freq, vel, soft) {
+  const t = a.ctx.currentTime;
+  const v = Math.min(0.05, vel);
+  const o = a.ctx.createOscillator(); o.type = soft ? "sine" : "triangle";
+  o.frequency.value = freq;
   const g = a.ctx.createGain();
-  g.gain.setValueAtTime(0.0001, t);
-  g.gain.exponentialRampToValueAtTime(Math.max(0.001, v), t + 0.008);
-  g.gain.exponentialRampToValueAtTime(0.0001, t + 2.2);
-  o1.connect(g); o2.connect(g2); g2.connect(g); g.connect(a.sum);
-  o1.start(t); o1.stop(t + 2.4);
-  o2.start(t); o2.stop(t + 0.6);
-  a.boxCount++;
+  g.gain.setValueAtTime(0, t);
+  g.gain.linearRampToValueAtTime(Math.max(0.0008, v), t + (soft ? 0.06 : 0.02));
+  g.gain.setTargetAtTime(0.0001, t + (soft ? 0.06 : 0.02), 0.32);
+  o.connect(g); g.connect(a.sum);
+  o.start(t); o.stop(t + 1.6);
+  a.noteCount++;
 }
 
 // 岩 = ごつごつした重い打音: 低い音程が沈み込む岩塊のノックと、岩同士が
@@ -2130,6 +1576,9 @@ function bgmUpdate() {
   delta = Math.min(1, delta * 2.5);
   a.deltaEnv = (a.deltaEnv || 0) * 0.72 + delta * 0.28;   // 短い余韻を持つ変化量エンベロープ
 
+  // 海の声部: 深い低音パッドの音量がスキャン線上の青 (海) の割合に 0〜100%
+  // リニアに比例。しきい値なし。海が広いほど満ち、陸が多い経度でははっきり引いて
+  // 砂・木・和音の音だけが残る。波のうねりLFOが満ち引きを、輝く海面が明るさを作る
   // 渦巻き雲 (低気圧) の指標: 縦方向に雲と晴れ間が交互に並ぶ縞・渦構造ほど大きい。
   // スキャン線上の内容のみから毎ティック算出する (時間や経度そのものには依存しない)
   let flips = 0, cvar = 0;
@@ -2139,50 +1588,52 @@ function bgmUpdate() {
   }
   const storm = Math.min(1, (flips / 5) * Math.min(1, cvar * 1.1));
   a.lastStorm = storm;
-  a.prevBands = bands.slice();
 
-  // === 地表が選ぶ和音 (子守唄の土台) ===
-  // いちばん優勢な地表が和音を決める: 海=A / 雲=E / 砂漠=D / 森=F#m。
-  // 和音が変わる瞬間にはハープのような優しいロールが鳴り、パッドとベースは
-  // ポルタメントで滑らかに新しい和音へ移ろう
-  const CHORDS = {
-    ocean:  { name: "A",   root: 110.00, tones: [110.00, 164.81, 220.00] },
-    cloud:  { name: "E",   root: 82.41,  tones: [82.41, 123.47, 164.81] },
-    desert: { name: "D",   root: 73.42,  tones: [73.42, 110.00, 146.83] },
-    forest: { name: "F#m", root: 92.50,  tones: [92.50, 138.59, 185.00] },
-  };
-  const nowMs0 = performance.now();
-  if (nowMs0 >= (a.nextChord || 0)) {
-    a.nextChord = nowMs0 + 3400;
-    const cand = [["ocean", col.oceanFrac], ["cloud", col.cloudFrac],
-                  ["desert", col.desertFrac], ["forest", col.forestFrac]];
-    cand.sort((x, y) => y[1] - x[1]);
-    const ch = CHORDS[cand[0][0]];
-    if (ch && ch.name !== a.chordName && cand[0][1] > 0) {
-      a.chordName = ch.name;
-      for (let i = 0; i < 3; i++) a.padOs[i].frequency.setTargetAtTime(ch.tones[i], t, 0.25);
-      a.bassO.frequency.setTargetAtTime(ch.root, t, 0.25);
-      for (let i = 0; i < 3; i++) musicBox(a, ch.tones[i] * 2, 0.018 + mean * 0.02, i * 0.15);
-    }
+  // 陸の量に応じた海の抑制: 陸 (茶+緑) が増えるほど海のパッドを深く沈める
+  const landFrac = col.desertFrac + col.forestFrac;
+  const seaSuppress = Math.max(0, 1 - landFrac * 3.0);
+  const oceanAmt = col.oceanFrac * (0.5 + col.oceanBright * 1.2) * seaSuppress;
+  // 海のパッド: 音量は純粋に「今」の海の量だけで決まり、和声は海の緯度分布で
+  // 決まる — 南の海は低いA、中緯度の海はE、北の海は高いA。同じ「海が多い」
+  // 経度でも、海がどの緯度にあるかで鳴る和音そのものが変わる
+  let oN = 0, oM = 0, oS = 0;
+  for (let i = 0; i < N_BANDS; i++) if (bandType[i] === T_OCEAN) {
+    if (i < 4) oN += bands[i]; else if (i < 8) oM += bands[i]; else oS += bands[i];
   }
-  // パッドとベースの音量は明るさの総量にリニアに比例 (真っ暗 → 無音で夜に譲る)。
-  // 子守唄の呼吸のようにゆったり追従する
-  const padVol = Math.min(0.15, mean * 0.34 * (1 + storm * 0.4));
-  a.padG.gain.setTargetAtTime(padVol, t, 0.5);
-  a.bassG.gain.setTargetAtTime(Math.min(0.11, mean * 0.24), t, 0.5);
-  a.stormDepth.gain.setTargetAtTime(padVol * storm * 0.6, t, 0.2);
-  // トーンは常に丸く、コントラストと渦度で明るさがそっと開く
-  a.filter.frequency.setTargetAtTime(900 + contrast * 2600 + storm * 1200, t, 0.4);
+  const oTot = oN + oM + oS + 0.0001;
+  const oceanShares = [oS / oTot, oM / oTot, oN / oTot]; // bandsG = [A2, E3, A3]
+  for (let i = 0; i < a.bandsG.length; i++)
+    a.bandsG[i].gain.setTargetAtTime(oceanAmt * 0.55 * oceanShares[i], t, 0.12);
+  // トーンの明るさはコントラストに大きく開く (場所ごとの音色差を最大化)
+  a.filter.frequency.setTargetAtTime(380 + contrast * 6500 + storm * 2000, t, 0.3); // 全体を低く暗く
+
+  // 大地の声部: 茶色 (砂漠・岩) + 緑 (森) の合計に純粋比例する、しっかり聞こえる
+  // 土の低音。陸に入れば低音が明確に満ちる
+  const landVol = Math.min(0.30, landFrac * 0.75);
+  a.landG.gain.setTargetAtTime(landVol, t, 0.12);
+
+  // 緯度の和音: 各バンドの明るさ → 対応する音の音量。基礎音量は控えめにし、
+  // 変化量で花開くように立ち上がる (どこを・いつなぞっているかが音で分かる)
+  for (let i = 0; i < N_BANDS; i++) {
+    const dB = Math.abs(bands[i] - prevB[i]);
+    const vol = Math.min(0.040, (bands[i] * (0.006 + a.deltaEnv * 0.045) + dB * 0.09) * (1 + storm * 2));
+    a.chordG[i].gain.setTargetAtTime(vol, t, 0.09);
+  }
+  a.prevBands = bands.slice();
   if (a.panner) {
     const pan = Math.max(-1, Math.min(1, scanLon / BBOX_DEG)) * 0.75;
     a.panner.pan.setTargetAtTime(pan, t, 0.2);
   }
 
-  // 大地の声部: 茶色 (砂漠・岩) + 緑 (森) の合計に純粋比例する、しっかり聞こえる
-  // 土の低音。陸に入れば低音が明確に満ちる
-  const landFrac = col.desertFrac + col.forestFrac;
-  const landVol = Math.min(0.30, landFrac * 0.75);
-  a.landG.gain.setTargetAtTime(landVol, t, 0.12);
+  // 雲の声部 (ノイズ不使用): 白いきらめきのパッドが雲の量にリニアに比例して満ちる。
+  // 平滑はクリックノイズ防止の最小限 (約0.1秒) のみで、雲を離れれば即引く
+  let cw = 0;                                                     // 雲の明るさの重み
+  for (let i = 0; i < N_BANDS; i++)
+    if (bandType[i] === T_CLOUD) cw = Math.max(cw, bands[i]);
+  const cloudVol = Math.min(0.030, col.cloudFrac * (0.3 + cw) * 0.11); // 白の量にリニアに比例 (旋律を主役にするため控えめ)
+  a.cloudG.gain.setTargetAtTime(cloudVol, t, 0.10);
+  a.cloudHi.gain.setTargetAtTime(cloudVol * (0.10 + cw * 0.45) * (1 + storm * 1.5), t, 0.12); // 渦の上では上の音が騒めく
+  a.stormDepth.gain.setTargetAtTime(cloudVol * storm * 0.9, t, 0.15); // 渦巻き雲 = 速い脈動が起きる
 
   // 夜の声部: 明るい成分が何もない真っ暗な部分では、夜の静寂のベースが
   // はっきり聞こえる音量で息づき、約12秒周期の呼吸のようにゆっくり膨らむ
@@ -2191,6 +1642,10 @@ function bgmUpdate() {
   a.nightG.gain.setTargetAtTime(nightVol, t, 0.4);
   a.nightSwell.gain.setTargetAtTime(nightVol * 0.3, t, 0.5);
 
+  // 大地の芯 (サブベース): 鳴っている全声部の総量に比例して底を支える
+  a.subG.gain.setTargetAtTime(
+    Math.min(0.13, oceanAmt * 0.18 + landFrac * 0.22 + nightVol * 0.5 + col.cloudFrac * 0.06), t, 0.3);
+
   if (!onDisk) return; // ディスク外では打楽器・旋律を鳴らさない (夜のベースのみ)
 
   // 地表の状態で楽器を弾き分ける (320msごと):
@@ -2198,7 +1653,7 @@ function bgmUpdate() {
   //   森・木 = 丸く温かい木琴 / 海 = 潮騒とパッドの持続 / 夜 = 静寂
   const nowMs = performance.now();
   if (nowMs >= a.nextBeat) {
-    a.nextBeat = nowMs + 800 + Math.random() * 160;  // 約65〜75BPM: 安静時心拍に近いゆったりした拍
+    a.nextBeat = nowMs + 480 + Math.random() * 300;  // 約60〜75BPM: 安静時心拍に近いゆったりした拍
     // 砂漠・砂・岩: 鳴る頻度も強さも茶色の量にリニアに比例 (しきい値なし)。
     // 乾いた砂の粒に加え、ごつごつと重い岩の低い打音が茶色の広さに応じて鳴る
     let di = 6, dv = 0;
@@ -2220,21 +1675,20 @@ function bgmUpdate() {
       woodPluck(a, 110 * Math.pow(2, SCALE_SEMIS[fi] / 12), Math.min(0.13, 0.03 + col.forestFrac * 0.20 + fv * 0.04));
     }
 
-    // オルゴールの旋律: いちばん明るいバンドの緯度が音の高さになる (北=高い音)。
-    // 明るさが音量、雲の白さが1オクターブ上のきらめきを添え、渦の上では
-    // 5度上の合いの手が加わる。すべてペンタトニックなので必ず心地よく響く
-    let mi = 0, mv = 0;
-    for (let i = 0; i < N_BANDS; i++) {
-      const wgt = bands[i] * (0.7 + Math.random() * 0.6);
-      if (wgt > mv) { mv = wgt; mi = i; }
-    }
-    if (bands[mi] > 0.02) {
-      const f0 = 220 * Math.pow(2, SCALE_SEMIS[mi] / 12);
-      musicBox(a, f0, 0.014 + bands[mi] * 0.05 + a.deltaEnv * 0.02);
-      if (Math.random() < col.cloudFrac * 2.5)
-        musicBox(a, f0 * 2, 0.006 + col.cloudFrac * 0.03, 0.18 + Math.random() * 0.2);
-      if (Math.random() < storm)
-        musicBox(a, f0 * 1.5, 0.008 + storm * 0.02, 0.4);
+    // 旋律 = 縦のプロファイルの指紋: スキャン線上の12バンドを北から南へ巡回しながら
+    // 奏でる。音の高さは緯度、音量はそのバンドの明るさ、音色とオクターブは地表タイプ
+    // (海=低く柔らかい / 雲=高く澄む / 砂漠=乾いた爪弾き / 森=木の音)。雲の模様や
+    // 地形の縦の並びがそのまま音符の並びになるので、場所・時刻・模様が違えば
+    // フレーズも必ず違う。変化量と渦度はフレーズを強く立たせる
+    for (let k = 0; k < 2; k++) {
+      a.arpIdx = (a.arpIdx + 1) % N_BANDS;
+      const bi = a.arpIdx, ty = bandType[bi];
+      const vel = bands[bi] * (0.016 + a.deltaEnv * 0.04 + storm * 0.04);
+      if (ty === T_OCEAN) noteHit(a, 110 * Math.pow(2, SCALE_SEMIS[bi] / 12), vel * 1.25, true);
+      else if (ty === T_CLOUD) noteHit(a, 220 * Math.pow(2, SCALE_SEMIS[bi] / 12), vel, true);
+      else if (ty === T_DESERT) noteHit(a, 110 * Math.pow(2, SCALE_SEMIS[bi] / 12), vel, false);
+      else if (ty === T_FOREST) woodPluck(a, 110 * Math.pow(2, SCALE_SEMIS[bi] / 12), Math.min(0.06, vel));
+      // 夜のバンドは鳴らさない — 静寂もフレーズの一部
     }
   }
 }
@@ -2285,7 +1739,6 @@ function draw(fa, fb, mixv, isGap, view) {
     const rPx = 0.47 * Math.min(w, h);
     gl.uniform2f(locGlobe.uScale, w / 2 / rPx, h / 2 / rPx);
     gl.uniform3f(locGlobe.uView, view.cx, view.cy, view.z);
-    gl.uniform2f(locGlobe.uRoll, Math.cos(rollAngle), Math.sin(rollAngle));
     gl.uniform1f(locGlobe.uPx, 1 / (rPx * view.z));
     gl.uniform1f(locGlobe.uMix, mixv);
     gl.uniform1f(locGlobe.uFlowOn, motion && flowResult ? 1 : 0);
@@ -2299,27 +1752,8 @@ function draw(fa, fb, mixv, isGap, view) {
     gl.uniform1f(locGlobe.uScanShow, bgmOn && scanShow ? 1 : 0);
     // トワイライト再構成用の太陽方向 (フレームA/B時刻 + 補間時刻)
     const tw = layerTw();
-    const nm = layerNm();
     gl.uniform1f(locGlobe.uTw, tw ? 1 : 0);
-    gl.uniform1f(locGlobe.uNm, nm ? 1 : 0);
-    gl.uniform1f(locGlobe.uSrcMerc, layerSrc() === "jma" ? 1 : 0);
-    // 星空背景: 衛星経度 + 表示中の補間時刻の恒星時から天球の向きを決める
-    gl.uniform1f(locGlobe.uStars, starsOn ? 1 : 0);
-    gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D, starTex);
-    gl.uniform1i(locGlobe.uStarTex, 3);
-    if (starsOn) {
-      const th = gmstRad(fa.t + (fb.t - fa.t) * mixv) + sat().lon * Math.PI / 180;
-      gl.uniform1f(locGlobe.uCosT, Math.cos(th));
-      gl.uniform1f(locGlobe.uSinT, Math.sin(th));
-      const skyTan = (viewSel && viewSel.value === "manual") ? skyTanFor(view.z)
-                   : (SKY_TAN[viewSel ? viewSel.value : "auto"] || 0.30);
-      gl.uniform1f(locGlobe.uSkyTan, skyTan);
-      gl.uniform1f(locGlobe.uAspect, w / h);
-      // 点像を可能な限り小さく (約1px以下)。輝点の大小ではなく輝度で光度差を表現する
-      gl.uniform1f(locGlobe.uStarK, Math.pow(h / (2 * skyTan), 2) * 3.6);  // 芯を極小に
-      gl.uniform1f(locGlobe.uStarGain, 0.5);   // 明るい星の芯が肥大しないよう控えめ
-    }
-    if (tw || nm) {
+    if (tw) {
       const sA = sunDirAt(fa.t), sB = sunDirAt(fb.t);
       const sI = sunDirAt(fa.t + (fb.t - fa.t) * mixv);
       gl.uniform3f(locGlobe.uSunA, sA[0], sA[1], sA[2]);
@@ -2342,8 +1776,6 @@ function draw(fa, fb, mixv, isGap, view) {
   ctx2d.filter = "none";
   ctx2d.fillStyle = "#000";
   ctx2d.fillRect(0, 0, w, h);
-  ctx2d.save();
-  ctx2d.translate(w / 2, h / 2); ctx2d.rotate(rollAngle); ctx2d.translate(-w / 2, -h / 2);  // 画面中心を軸に回転
   // 簡易の色調整 (青み + コントラスト)
   ctx2d.filter = "contrast(115%) saturate(105%) hue-rotate(-4deg)";
   ctx2d.globalAlpha = 1;
@@ -2352,7 +1784,6 @@ function draw(fa, fb, mixv, isGap, view) {
   ctx2d.drawImage(iB, x, y, s, s);
   ctx2d.globalAlpha = 1;
   ctx2d.filter = "none";
-  ctx2d.restore();
   return true;
 }
 
@@ -2409,27 +1840,6 @@ function tick(now) {
   // 連続したフレーム間だけを一定レート (pairMs) で再生する。
   // 欠落区間は尺ゼロ = 再生ヘッドが瞬時に飛び越え、映像はカットでつながる。
   // ホールドは置かず、同じ時刻のフレームで停止することは無い。
-  // 回転: 目標角速度へ滑らかに加減速し、角度を進める
-  // 実経過時間 (描画フレームが疎でも回転・パン・ズームの補間が実時間どおりに進む)
-  const dtr = Math.min(rollLast ? now - rollLast : 0, 1000); rollLast = now;
-  {
-    const target = rollOn ? ROLL_SPEED * rollDir : 0;
-    rollSpeed += (target - rollSpeed) * (1 - Math.exp(-dtr / ROLL_TAU));
-    if (!rollOn && Math.abs(rollSpeed) < ROLL_SPEED * 0.01) rollSpeed = 0;   // 停止時は確実にゼロへ
-    rollAngle = (rollAngle + rollSpeed * dtr) % (2 * Math.PI);
-  }
-  // 手動ズーム: 目標値へ指数的に滑らかに追従 (ホイールの段差を吸収)
-  if (zoomTarget !== null && viewSel && viewSel.value === "manual") {
-    const k = 1 - Math.exp(-dtr / 90);
-    const nz = curView.z + (zoomTarget - curView.z) * k;
-    let ncx = curView.cx, ncy = curView.cy;
-    if (panTarget) {
-      ncx += (panTarget.cx - ncx) * k; ncy += (panTarget.cy - ncy) * k;
-      if (Math.abs(ncx - panTarget.cx) < 1e-4) ncx = panTarget.cx;
-      if (Math.abs(ncy - panTarget.cy) < 1e-4) ncy = panTarget.cy;
-    }
-    curView = { cx: ncx, cy: ncy, z: Math.abs(nz - zoomTarget) < 1e-4 ? zoomTarget : nz };
-  }
   const P = pairMs(), step = stepMs();
   const durs = new Array(ready.length - 1);
   let total = 0;
@@ -2464,40 +1874,18 @@ function tick(now) {
   const mixv = isGap ? 1 : frac;
   const shownTNow = isGap ? fb.t : (frac < 0.5 ? fa.t : fb.t);
 
-  // ジャンプ検出: ラップ、または表示時刻が前方へ飛んだ (=欠落を跨いだ) 瞬間。
-  // カットではなく、直前の画面をスナップショットしてクロスフェードで滑らかにつなぐ
-  // (地球も背景も一緒に溶暗・溶明する)。スワイプシーク中はフェードしない
+  // カット検出: ラップ、または表示時刻が前方へ飛んだ (=欠落を跨いだ) 瞬間にビューを瞬時に切替
+  // (スワイプシーク中のジャンプではカットしない)
   if (playing && !scrubbing) {
     const jumped = lastShownT !== null && shownTNow - lastShownT > step * 1.5;
     if ((wrapped || jumped) && now - lastCutAt > MIN_CUT_INTERVAL) {
-      if (useGL && gl && snapTex) {
-        // 現在キャンバスに残る「ジャンプ前の画面」をスナップショットに複製
-        gl.bindTexture(gl.TEXTURE_2D, snapTex);
-        gl.copyTexImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 0, 0, canvas.width, canvas.height, 0);
-        fadeActive = true; fadeAlpha = 1;
-      }
-      cutSwitchView();          // 画角の切替もフェードで隠れる
+      cutSwitchView();
       lastCutAt = now;
     }
   }
   lastShownT = shownTNow;
 
   if (draw(fa, fb, mixv, isGap)) {
-    // フェード中: 凍結したジャンプ前の画面を、新しい映像の上に薄れながら重ねる
-    if (fadeActive && useGL && gl && progComp) {
-      gl.useProgram(progComp);
-      gl.bindVertexArray(quadVAO);
-      gl.activeTexture(gl.TEXTURE0);
-      gl.bindTexture(gl.TEXTURE_2D, snapTex);
-      gl.uniform1i(locComp.uTex, 0);
-      gl.uniform1f(locComp.uAlpha, Math.max(0, fadeAlpha));
-      gl.enable(gl.BLEND);
-      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-      gl.disable(gl.BLEND);
-      fadeAlpha -= dt / FADE_MS;
-      if (fadeAlpha <= 0) { fadeActive = false; fadeAlpha = 0; }
-    }
     const shownT = shownTNow;
     const key = `${shownT}`;
     if (key !== shownPairKey) {
@@ -2600,8 +1988,7 @@ async function start() {
   const session = ++SESSION;
   clearTimeout(connectRetryTimer);
   playPos = 0; shownPairKey = "";
-  if (!(viewSel && viewSel.value === "manual")) curView = { ...FULL_VIEW }; // 手動ズームは保持
-  lastZoomIdx = -1;
+  curView = { ...FULL_VIEW }; lastZoomIdx = -1;
   lastShownT = null; lastCutAt = 0;
   scrubbing = false; ptr = null;
   initialLoadDone = false;
@@ -2618,27 +2005,6 @@ async function start() {
   overlay.querySelector(".spinner").style.display = "";
   ovMsg.textContent = "CONNECTING TO EUMETSAT…";
   ovMsg2.textContent = "";
-
-  // 気象庁カラー (JMAタイル) はクロスオリジン取得が許可されていない環境では
-  // ブラウザから読み込めない。開始時に1タイルを実fetchで検査し、失敗したら
-  // 自動的にGIBSの白黒可視レイヤーへ切り替えて必ず表示できるようにする
-  if (layerSrc() === "jma") {
-    ovMsg.textContent = "CONNECTING TO JMA HIMAWARI…";
-    // 検査するのは「クロスオリジン取得が可能か」だけ。応答が返れば (404でも) CORSは
-    // 通っている = カラー取得可能。fetchが例外になる場合のみCORSブロックと判断する
-    let jmaOk = false;
-    try {
-      const tProbe = Math.floor((Date.now() - MIN_LAG_MS) / stepMs()) * stepMs();
-      const rr = await fetch(probeUrlFor(satSel.value, layerId(), tProbe, 256), { signal: AbortSignal.timeout(12000) });
-      try { await rr.blob(); } catch (e) {}
-      jmaOk = true;  // 例外なく応答 = CORS通過
-    } catch (e) { jmaOk = false; }
-    if (session !== SESSION) return;
-    if (!jmaOk && SATS[satSel.value].layers.vis) {
-      layerSel.value = "vis";   // カラー取得不可 → 可視(白黒)にフォールバック
-      updateStatus();
-    }
-  }
 
   let latest = null;
   try {
@@ -2706,7 +2072,6 @@ satSel.addEventListener("change", () => { rebuildLayerOptions(); start(); });
 layerSel.addEventListener("change", start);
 speedSel.addEventListener("change", updateStatus);
 interpSel.addEventListener("change", updateStatus);
-viewSel.addEventListener("change", applyViewMode);
 fixChk.addEventListener("change", updateStatus);
 fsBtn.addEventListener("click", () => {
   if (document.fullscreenElement) document.exitFullscreen();
@@ -2723,20 +2088,6 @@ scanBtn.addEventListener("click", () => {
   scanShow = !scanShow;
   scanBtn.textContent = scanShow ? "スキャン線: ON" : "スキャン線: OFF";
 });
-starsBtn.addEventListener("click", () => {
-  starsOn = !starsOn;
-  starsBtn.textContent = starsOn ? "星空: ON" : "星空: OFF";
-});
-{
-  const rb = document.getElementById("rollBtn");
-  rb.addEventListener("pointerdown", (e) => { e.preventDefault(); try { rb.setPointerCapture(e.pointerId); } catch (_) {} setRolling(true, e.shiftKey); });
-  const stop = () => setRolling(false);
-  rb.addEventListener("pointerup", stop);
-  rb.addEventListener("pointercancel", stop);
-  rb.addEventListener("lostpointercapture", stop);
-  rb.addEventListener("contextmenu", (e) => e.preventDefault());   // 長押しメニューを抑止 (タッチ)
-}
-window.addEventListener("blur", () => setRolling(false));           // フォーカスを失ったら必ず停止
 
 // --- UIの表示制御 ---
 // ロード完了後は日時 (と映像) 以外のすべての表示を隠し、タップしたときだけ5秒間表示する。
@@ -2764,120 +2115,37 @@ controls.addEventListener("change", showUI);
 
 // --- タップ判定 & 左右スワイプで早送り/巻き戻し ---
 function bindCanvas() {
-  // ドラッグ = 地球の表示位置を移動 (パン)。早送り/巻き戻しは画面下端の帯 (SEEK_STRIP px)
-  // でのドラッグ、または Shift+ドラッグ。タップは UI の表示/非表示。
-  const SEEK_STRIP = 36;
   canvas.addEventListener("pointerdown", (e) => {
-    const seekZone = e.shiftKey || (canvas.clientHeight - e.clientY) <= SEEK_STRIP;
-    ptr = { id: e.pointerId, x0: e.clientX, y0: e.clientY, lx: e.clientX, ly: e.clientY,
-            t0: performance.now(), pos0: playPos, moved: false, mode: seekZone ? "seek" : "pan" };
+    ptr = { id: e.pointerId, x0: e.clientX, t0: performance.now(), pos0: playPos, moved: false };
     try { canvas.setPointerCapture(e.pointerId); } catch (_) {}
   });
   canvas.addEventListener("pointermove", (e) => {
     if (!ptr || e.pointerId !== ptr.id) return;
-    const dx = e.clientX - ptr.x0, dy = e.clientY - ptr.y0;
-    if (!ptr.moved && Math.hypot(dx, dy) > 6) {
-      ptr.moved = true;
-      if (ptr.mode === "seek") scrubbing = true;
-      else canvas.style.cursor = "grabbing";
-    }
-    if (!ptr.moved) return;
-    if (ptr.mode === "seek") {
-      if (playTotal > 0) {
-        // 画面幅いっぱいのドラッグ = ループ全体 (右で早送り / 左で巻き戻し)
-        const delta = (dx / Math.max(1, canvas.clientWidth)) * playTotal;
-        playPos = (((ptr.pos0 + delta) % playTotal) + playTotal) % playTotal;
-      }
-    } else {
-      panBy(e.clientX - ptr.lx, e.clientY - ptr.ly);   // 直前位置からの差分で移動
-      ptr.lx = e.clientX; ptr.ly = e.clientY;
+    const dx = e.clientX - ptr.x0;
+    if (!ptr.moved && Math.abs(dx) > 8) { ptr.moved = true; scrubbing = true; }
+    if (scrubbing && playTotal > 0) {
+      // 画面幅いっぱいのスワイプ = ループ全体 (右スワイプで早送り / 左で巻き戻し)
+      const delta = (dx / Math.max(1, canvas.clientWidth)) * playTotal;
+      playPos = (((ptr.pos0 + delta) % playTotal) + playTotal) % playTotal;
     }
   });
-  // タップ: UI の表示/非表示 (ダブルタップと区別するため少し待ってから実行)
-  // ダブルクリック / ダブルタップ: 地球の表示位置を画面中心へ戻す (拡大率は維持)
-  const DBL_MS = 320, DBL_DIST = 30;
-  let lastTap = null, tapTimer = null;
   const endPtr = (e) => {
     if (!ptr || e.pointerId !== ptr.id) return;
     const wasTap = !ptr.moved && performance.now() - ptr.t0 < 500;
     scrubbing = false;
-    canvas.style.cursor = "";
     ptr = null;
-    if (!wasTap) return;
-    // 判定時刻は入力イベント自体の時刻 (処理が重くハンドラが遅れても正しく判定できる)
-    const now = e.timeStamp || performance.now();
-    if (lastTap && now - lastTap.t < DBL_MS && Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < DBL_DIST) {
-      clearTimeout(tapTimer); tapTimer = null; lastTap = null;
-      recenterView();
-      return;
+    if (wasTap) {
+      // タップ: UI (メニュー・ステータス等) の表示/非表示を切り替え
+      if (uiVisible) hideUI();
+      else showUI();
     }
-    lastTap = { t: now, x: e.clientX, y: e.clientY };
-    clearTimeout(tapTimer);
-    tapTimer = setTimeout(() => { tapTimer = null; if (uiVisible) hideUI(); else showUI(); }, DBL_MS);
   };
   canvas.addEventListener("pointerup", endPtr);
   canvas.addEventListener("pointercancel", endPtr);
-
-  // --- スクロール (ホイール / トラックパッド) で地球の大きさを自由に変更 ---
-  canvas.addEventListener("wheel", (e) => {
-    e.preventDefault();
-    let dy = e.deltaY;
-    if (e.deltaMode === 1) dy *= 16; else if (e.deltaMode === 2) dy *= 400;  // 行/ページ単位を画素相当へ
-    // トラックパッドのピンチは ctrlKey 付きの wheel として届く → 強めに反応
-    const gain = e.ctrlKey ? 0.012 : 0.0018;
-    const base = zoomTarget ?? curView.z;
-    setManualZoom(base * Math.exp(-dy * gain), e.clientX, e.clientY);   // 上スクロール/ピンチアウト = カーソル位置を中心に拡大
-    showUI();
-  }, { passive: false });
-
-  // --- タッチ: 2本指ピンチで拡大縮小 (1本指は従来どおりスワイプシーク) ---
-  const touches = new Map();
-  let pinch = null;   // {d0, z0}
-  const dist = () => { const a = [...touches.values()]; return Math.hypot(a[0].x - a[1].x, a[0].y - a[1].y); };
-  canvas.addEventListener("pointerdown", (e) => {
-    if (e.pointerType !== "touch") return;
-    touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    if (touches.size === 2) {
-      const a = [...touches.values()];
-      pinch = { d0: Math.max(1, dist()), z0: zoomTarget ?? curView.z,
-                mx: (a[0].x + a[1].x) / 2, my: (a[0].y + a[1].y) / 2 };
-      scrubbing = false; ptr = null; canvas.style.cursor = "";   // 1本指操作は中断してピンチへ
-    }
-  });
-  canvas.addEventListener("pointermove", (e) => {
-    if (!touches.has(e.pointerId)) return;
-    touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    if (pinch && touches.size === 2) {
-      const a = [...touches.values()];
-      const mx = (a[0].x + a[1].x) / 2, my = (a[0].y + a[1].y) / 2;
-      panBy(mx - pinch.mx, my - pinch.my);            // 2本指の中点の移動 = パン
-      pinch.mx = mx; pinch.my = my;
-      setManualZoom(pinch.z0 * dist() / pinch.d0, mx, my);   // 中点を基準に拡大縮小
-    }
-  });
-  const endTouch = (e) => { touches.delete(e.pointerId); if (touches.size < 2) pinch = null; };
-  canvas.addEventListener("pointerup", endTouch);
-  canvas.addEventListener("pointercancel", endTouch);
 }
 bindCanvas();
-document.addEventListener("keyup", (e) => {
-  if (e.key === "r" || e.key === "R") setRolling(false);   // R を離したら停止
-});
 document.addEventListener("keydown", (e) => {
-  if (e.target && /^(INPUT|SELECT|TEXTAREA|BUTTON)$/.test(e.target.tagName)) return;  // 操作部品のフォーカス中は無効
   if (e.code === "Space") { e.preventDefault(); togglePlay(); }
-  // + / - キーでも拡大縮小
-  if (e.key === "+" || e.key === "=" ) { setManualZoom((zoomTarget ?? curView.z) * 1.15); showUI(); }
-  if (e.key === "-" || e.key === "_" ) { setManualZoom((zoomTarget ?? curView.z) / 1.15); showUI(); }
-  if (e.key === "Home" || e.key === "0") recenterView();   // Home / 0 キーでも中心へ
-  // R: 押している間だけ高速回転 (Shift+R: 逆回転)。キーリピートは無視し、keyup で停止
-  if ((e.key === "r" || e.key === "R") && !e.repeat) { setRolling(true, e.shiftKey); showUI(); }
-  // ←/→ キーで1コマ (10分) ずつ巻き戻し/早送り
-  if ((e.key === "ArrowLeft" || e.key === "ArrowRight") && playTotal > 0) {
-    e.preventDefault();
-    const d = (e.key === "ArrowRight" ? 1 : -1) * pairMs();
-    playPos = (((playPos + d) % playTotal) + playTotal) % playTotal;
-  }
 });
 
 setInterval(() => { refreshLatest(SESSION); }, REFRESH_MS);
